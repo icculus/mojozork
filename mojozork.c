@@ -154,185 +154,241 @@ static void opcode_call(void)
 } // opcode_call
 
 
-#define OPCODE(name) opname = #name; op = opcode_##name; break
-#define OPCODE_WRITEME(name) opname = #name; break
-
-// extended opcodes in ver5+ ...
-static void opcode_extended(void)
+typedef struct
 {
-    VERIFY_OPCODE("extended", 5);
+    const char *name;
+    OpcodeFn fn;
+} Opcode;
 
-    FIXME("lots of missing instructions here.  :)");
-    FIXME("verify PC is sane");
-    const uint8 opcode = *(GPC++);
-    const OpcodeFn op = NULL;
-    const char *opname = NULL;
-
-    switch (opcode)
-    {
-        case 0: OPCODE_WRITEME(save_ext);
-        case 1: OPCODE_WRITEME(restore);
-        case 2: OPCODE_WRITEME(log_shift);
-        case 3: OPCODE_WRITEME(art_shift);
-        case 4: OPCODE_WRITEME(set_font);
-        case 5: OPCODE_WRITEME(draw_picture);
-        case 6: OPCODE_WRITEME(picture_data);
-        case 7: OPCODE_WRITEME(erase_picture);
-        case 8: OPCODE_WRITEME(set_margins);
-        case 9: OPCODE_WRITEME(save_undo);
-        case 10: OPCODE_WRITEME(restore_undo);
-        case 11: OPCODE_WRITEME(print_unicode);
-        case 12: OPCODE_WRITEME(check_unicode);
-        case 13: OPCODE_WRITEME(set_true_colour);
-        // 14 and 15 are unused.
-        case 16: OPCODE_WRITEME(move_window);
-        case 17: OPCODE_WRITEME(window_size);
-        case 18: OPCODE_WRITEME(window_style);
-        case 19: OPCODE_WRITEME(get_wind_prop);
-        case 20: OPCODE_WRITEME(scroll_window);
-        case 21: OPCODE_WRITEME(pop_stack);
-        case 22: OPCODE_WRITEME(read_mouse);
-        case 23: OPCODE_WRITEME(mouse_window);
-        case 24: OPCODE_WRITEME(push_stack);
-        case 25: OPCODE_WRITEME(put_wind_prop);
-        case 26: OPCODE_WRITEME(print_form);
-        case 27: OPCODE_WRITEME(make_menu);
-        case 28: OPCODE_WRITEME(picture_table);
-        case 29: OPCODE_WRITEME(buffer_screen);
-        default:
-            die("Unsupported or unknown extended opcode #%u", (unsigned int) opcode);
-    } // switch
-
-    if (!op)
-        die("Unimplemented extended opcode #%d ('%s')", (unsigned int) opcode, opname);
-
-    dbg("Run extended opcode %u ('%s') ...\n", opcode, opname);
-    op();
-} // opcode_extended
+// this is kinda wasteful (there are 120 opcodes scattered around these),
+//  but it simplifies some things to just have a big linear array.
+static Opcode GOpcodes[256];
+static Opcode GExtendedOpcodes[30];
 
 static void runInstruction(void)
 {
     FIXME("lots of missing instructions here.  :)");
     FIXME("verify PC is sane");
-    const uint8 opcode = *(GPC++);
-    OpcodeFn op = NULL;
-    const char *opname = NULL;
+    uint8 opcode = *(GPC++);
 
-    switch (opcode)
+    const int extended = (opcode == 190) ? 1 : 0;
+    if (extended)
     {
-        // 2-operand instructions...
-        case 1: OPCODE_WRITEME(je);
-        case 2: OPCODE_WRITEME(jl);
-        case 3: OPCODE_WRITEME(jg);
-        case 4: OPCODE_WRITEME(dec_chk);
-        case 5: OPCODE_WRITEME(inc_chk);
-        case 6: OPCODE_WRITEME(jin);
-        case 7: OPCODE_WRITEME(test);
-        case 8: OPCODE_WRITEME(or);
-        case 9: OPCODE_WRITEME(and);
-        case 10: OPCODE_WRITEME(test_attr);
-        case 11: OPCODE_WRITEME(set_attr);
-        case 12: OPCODE_WRITEME(clear_attr);
-        case 13: OPCODE_WRITEME(store);
-        case 14: OPCODE_WRITEME(insert_obj);
-        case 15: OPCODE_WRITEME(loadw);
-        case 16: OPCODE_WRITEME(loadb);
-        case 17: OPCODE_WRITEME(get_prop);
-        case 18: OPCODE_WRITEME(get_prop_addr);
-        case 19: OPCODE_WRITEME(get_next_prop);
-        case 20: OPCODE_WRITEME(add);
-        case 21: OPCODE_WRITEME(sub);
-        case 22: OPCODE_WRITEME(mul);
-        case 23: OPCODE_WRITEME(div);
-        case 24: OPCODE_WRITEME(mod);
-        case 25: OPCODE_WRITEME(call_2s);
-        case 26: OPCODE_WRITEME(call_2n);
-        case 27: OPCODE_WRITEME(set_colour);
-        case 28: OPCODE_WRITEME(throw);
+        opcode = *(GPC++);
+        if (opcode >= (sizeof (GExtendedOpcodes) / sizeof (GExtendedOpcodes[0])))
+            die("Unsupported or unknown extended opcode #%u", (unsigned int) opcode);
+    } // if
 
-        // 1-operand instructions...
-        case 128: OPCODE_WRITEME(jz);
-        case 129: OPCODE_WRITEME(get_sibling);
-        case 130: OPCODE_WRITEME(get_child);
-        case 131: OPCODE_WRITEME(get_parent);
-        case 132: OPCODE_WRITEME(get_prop_len);
-        case 133: OPCODE_WRITEME(inc);
-        case 134: OPCODE_WRITEME(dec);
-        case 135: OPCODE_WRITEME(print_addr);
-        case 136: OPCODE_WRITEME(call_1s);
-        case 137: OPCODE_WRITEME(remove_obj);
-        case 138: OPCODE_WRITEME(print_obj);
-        case 139: OPCODE_WRITEME(ret);
-        case 140: OPCODE_WRITEME(jump);
-        case 141: OPCODE_WRITEME(print_paddr);
-        case 142: OPCODE_WRITEME(load);
-        case 143: OPCODE_WRITEME(not);  // call_1n in ver5+
+    const Opcode *op = extended ? &GExtendedOpcodes[opcode] : &GOpcodes[opcode];
 
-        // 0-operand instructions...
-        case 176: OPCODE_WRITEME(rtrue);
-        case 177: OPCODE_WRITEME(rfalse);
-        case 178: OPCODE_WRITEME(print);
-        case 179: OPCODE_WRITEME(print_ret);
-        case 180: OPCODE_WRITEME(nop);
-        case 181: OPCODE_WRITEME(save);
-        case 182: OPCODE_WRITEME(restore);
-        case 183: OPCODE_WRITEME(restart);
-        case 184: OPCODE_WRITEME(ret_popped);
-        case 185: OPCODE_WRITEME(pop);
-        case 186: OPCODE_WRITEME(quit);
-        case 187: OPCODE_WRITEME(new_line);
-        case 188: OPCODE_WRITEME(show_status);
-        case 189: OPCODE_WRITEME(verify);
-        case 190: OPCODE(extended);
-        case 191: OPCODE_WRITEME(piracy);
-
-        // variable operand instructions...
-        case 224: OPCODE(call);
-        case 225: OPCODE_WRITEME(storew);
-        case 226: OPCODE_WRITEME(storeb);
-        case 227: OPCODE_WRITEME(put_prop);
-        case 228: OPCODE_WRITEME(sread);
-        case 229: OPCODE_WRITEME(print_char);
-        case 230: OPCODE_WRITEME(print_num);
-        case 231: OPCODE_WRITEME(random);
-        case 232: OPCODE_WRITEME(push);
-        case 233: OPCODE_WRITEME(pull);
-        case 234: OPCODE_WRITEME(split_window);
-        case 235: OPCODE_WRITEME(set_window);
-        case 236: OPCODE_WRITEME(call_vs2);
-        case 237: OPCODE_WRITEME(erase_window);
-        case 238: OPCODE_WRITEME(erase_line);
-        case 239: OPCODE_WRITEME(set_cursor);
-        case 240: OPCODE_WRITEME(get_cursor);
-        case 241: OPCODE_WRITEME(set_text_style);
-        case 242: OPCODE_WRITEME(buffer_mode);
-        case 243: OPCODE_WRITEME(output_stream);
-        case 244: OPCODE_WRITEME(input_stream);
-        case 245: OPCODE_WRITEME(sound_effect);
-        case 246: OPCODE_WRITEME(read_char);
-        case 247: OPCODE_WRITEME(scan_table);
-        case 248: OPCODE_WRITEME(not_v5);
-        case 249: OPCODE_WRITEME(call_vn);
-        case 250: OPCODE_WRITEME(call_vn2);
-        case 251: OPCODE_WRITEME(tokenise);
-        case 252: OPCODE_WRITEME(encode_text);
-        case 253: OPCODE_WRITEME(copy_table);
-        case 254: OPCODE_WRITEME(print_table);
-        case 255: OPCODE_WRITEME(check_arg_count);
-
-        default:
-            die("Unsupported or unknown opcode #%u", (unsigned int) opcode);
-    } // switch
-
-    if (!op)
-        die("Unimplemented opcode #%d ('%s')", (unsigned int) opcode, opname);
-
-    dbg("Run opcode %u ('%s') ...\n", opcode, opname);
-    op();
+    if (!op->name)
+        die("Unsupported or unknown %sopcode #%u", extended ? "extended " : "", (unsigned int) opcode);
+    else if (!op->fn)
+        die("Unimplemented %sopcode #%d ('%s')", extended ? "extended " : "", (unsigned int) opcode, op->name);
+    else
+    {
+        dbg("pc=%u %sopcode=%u ('%s')\n", (((unsigned int) (GStory-GPC))-1) - extended, extended ? "ext " : "", opcode, op->name);
+        op->fn();
+    } // else
 } // runInstruction
 
-#undef OPCODE
-#undef OPCODE_WRITEME
+static void initOpcodeTable(const uint8fast version)
+{
+    memset(GOpcodes, '\0', sizeof (GOpcodes));
+    memset(GExtendedOpcodes, '\0', sizeof (GExtendedOpcodes));
+
+    Opcode *opcodes = GOpcodes;
+
+    #define OPCODE(num, opname) opcodes[num].name = #opname; opcodes[num].fn = opcode_##opname
+    #define OPCODE_WRITEME(num, opname) opcodes[num].name = #opname
+
+    // this is the basic ver1 opcode table, then we can patch it after.
+    // most early Infocom games are version 3, but apparently ver1 is in the wild...
+
+    // 2-operand instructions...
+    OPCODE_WRITEME(1, je);
+    OPCODE_WRITEME(2, jl);
+    OPCODE_WRITEME(3, jg);
+    OPCODE_WRITEME(4, dec_chk);
+    OPCODE_WRITEME(5, inc_chk);
+    OPCODE_WRITEME(6, jin);
+    OPCODE_WRITEME(7, test);
+    OPCODE_WRITEME(8, or);
+    OPCODE_WRITEME(9, and);
+    OPCODE_WRITEME(10, test_attr);
+    OPCODE_WRITEME(11, set_attr);
+    OPCODE_WRITEME(12, clear_attr);
+    OPCODE_WRITEME(13, store);
+    OPCODE_WRITEME(14, insert_obj);
+    OPCODE_WRITEME(15, loadw);
+    OPCODE_WRITEME(16, loadb);
+    OPCODE_WRITEME(17, get_prop);
+    OPCODE_WRITEME(18, get_prop_addr);
+    OPCODE_WRITEME(19, get_next_prop);
+    OPCODE_WRITEME(20, add);
+    OPCODE_WRITEME(21, sub);
+    OPCODE_WRITEME(22, mul);
+    OPCODE_WRITEME(23, div);
+    OPCODE_WRITEME(24, mod);
+
+    // 1-operand instructions...
+    OPCODE_WRITEME(128, jz);
+    OPCODE_WRITEME(129, get_sibling);
+    OPCODE_WRITEME(130, get_child);
+    OPCODE_WRITEME(131, get_parent);
+    OPCODE_WRITEME(132, get_prop_len);
+    OPCODE_WRITEME(133, inc);
+    OPCODE_WRITEME(134, dec);
+    OPCODE_WRITEME(135, print_addr);
+    OPCODE_WRITEME(137, remove_obj);
+    OPCODE_WRITEME(138, print_obj);
+    OPCODE_WRITEME(139, ret);
+    OPCODE_WRITEME(140, jump);
+    OPCODE_WRITEME(141, print_paddr);
+    OPCODE_WRITEME(142, load);
+    OPCODE_WRITEME(143, not);
+
+    // 0-operand instructions...
+    OPCODE_WRITEME(176, rtrue);
+    OPCODE_WRITEME(177, rfalse);
+    OPCODE_WRITEME(178, print);
+    OPCODE_WRITEME(179, print_ret);
+    OPCODE_WRITEME(180, nop);
+    OPCODE_WRITEME(181, save);
+    OPCODE_WRITEME(182, restore);
+    OPCODE_WRITEME(183, restart);
+    OPCODE_WRITEME(184, ret_popped);
+    OPCODE_WRITEME(185, pop);
+    OPCODE_WRITEME(186, quit);
+    OPCODE_WRITEME(187, new_line);
+
+    // variable operand instructions...
+    OPCODE(224, call);
+    OPCODE_WRITEME(225, storew);
+    OPCODE_WRITEME(226, storeb);
+    OPCODE_WRITEME(227, put_prop);
+    OPCODE_WRITEME(228, sread);
+    OPCODE_WRITEME(229, print_char);
+    OPCODE_WRITEME(230, print_num);
+    OPCODE_WRITEME(231, random);
+    OPCODE_WRITEME(232, push);
+    OPCODE_WRITEME(233, pull);
+
+    if (version < 3)  // most early Infocom games are version 3.
+        return;  // we're done.
+
+    OPCODE_WRITEME(188, show_status);
+    OPCODE_WRITEME(189, verify);
+    OPCODE_WRITEME(234, split_window);
+    OPCODE_WRITEME(235, set_window);
+    OPCODE_WRITEME(243, output_stream);
+    OPCODE_WRITEME(244, input_stream);
+    OPCODE_WRITEME(245, sound_effect);
+
+    if (version < 4)
+        return;  // we're done.
+
+    OPCODE_WRITEME(25, call_2s);
+    OPCODE_WRITEME(180, save_ver4);
+    OPCODE_WRITEME(224, call_vs);;
+    OPCODE_WRITEME(228, sread_ver4);
+    OPCODE_WRITEME(236, call_vs2);
+    OPCODE_WRITEME(237, erase_window);
+    OPCODE_WRITEME(238, erase_line);
+    OPCODE_WRITEME(239, set_cursor);
+    OPCODE_WRITEME(240, get_cursor);
+    OPCODE_WRITEME(241, set_text_style);
+    OPCODE_WRITEME(242, buffer_mode);
+    OPCODE_WRITEME(246, read_char);
+    OPCODE_WRITEME(247, scan_table);
+
+    // this is the "show_status" opcode in ver3; illegal in ver4+.
+    opcodes[188].name = NULL;
+    opcodes[188].fn = NULL;
+
+    if (version < 5)
+        return;  // we're done.
+
+    OPCODE_WRITEME(26, call_2n);
+    OPCODE_WRITEME(27, set_colour);
+    OPCODE_WRITEME(28, throw);
+    OPCODE_WRITEME(136, call_1s);
+    OPCODE_WRITEME(143, call_1n);
+    OPCODE_WRITEME(185, catch);
+    OPCODE_WRITEME(191, piracy);
+    OPCODE_WRITEME(228, aread);
+    OPCODE_WRITEME(243, output_stream_ver5);
+    OPCODE_WRITEME(245, sound_effect_ver5);
+    OPCODE_WRITEME(248, not_ver5);
+    OPCODE_WRITEME(249, call_vn);
+    OPCODE_WRITEME(250, call_vn2);
+    OPCODE_WRITEME(251, tokenise);
+    OPCODE_WRITEME(252, encode_text);
+    OPCODE_WRITEME(253, copy_table);
+    OPCODE_WRITEME(254, print_table);
+    OPCODE_WRITEME(255, check_arg_count);
+
+    // this is the "save" and "restore" opcodes in ver1-4; illegal in ver5+.
+    //  in ver5+, they use extended opcode 0 and 1 for these.
+    opcodes[180].name = opcodes[181].name = NULL;
+    opcodes[180].name = opcodes[181].name = NULL;
+
+    // We special-case this later, so no function pointer supplied.
+    opcodes[190].name = "extended";
+
+    // extended opcodes in ver5+ ...
+    opcodes = GExtendedOpcodes;
+    OPCODE_WRITEME(0, save_ext);
+    OPCODE_WRITEME(1, restore_ext);
+    OPCODE_WRITEME(2, log_shift);
+    OPCODE_WRITEME(3, art_shift);
+    OPCODE_WRITEME(4, set_font);
+    OPCODE_WRITEME(9, save_undo);
+    OPCODE_WRITEME(10, restore_undo);
+    OPCODE_WRITEME(11, print_unicode);
+    OPCODE_WRITEME(12, check_unicode);
+    OPCODE_WRITEME(13, set_true_colour);
+    opcodes = GOpcodes;
+
+    if (version < 6)
+        return;  // we're done.
+
+    OPCODE_WRITEME(27, set_colour_ver6);
+    OPCODE_WRITEME(27, throw_ver6);
+    OPCODE_WRITEME(185, catch_ver6);
+    OPCODE_WRITEME(233, pull_ver6);
+    OPCODE_WRITEME(238, erase_line_ver6);
+    OPCODE_WRITEME(239, set_cursor_ver6);
+    OPCODE_WRITEME(243, output_stream_ver6);
+    OPCODE_WRITEME(248, not_ver6);
+
+    opcodes = GExtendedOpcodes;
+    OPCODE_WRITEME(4, set_font_ver6);
+    OPCODE_WRITEME(5, draw_picture);
+    OPCODE_WRITEME(6, picture_data);
+    OPCODE_WRITEME(7, erase_picture);
+    OPCODE_WRITEME(8, set_margins);
+    OPCODE_WRITEME(13, set_true_colour_ver6);
+    // 14 and 15 are unused.
+    OPCODE_WRITEME(16, move_window);
+    OPCODE_WRITEME(17, window_size);
+    OPCODE_WRITEME(18, window_style);
+    OPCODE_WRITEME(19, get_wind_prop);
+    OPCODE_WRITEME(20, scroll_window);
+    OPCODE_WRITEME(21, pop_stack);
+    OPCODE_WRITEME(22, read_mouse);
+    OPCODE_WRITEME(23, mouse_window);
+    OPCODE_WRITEME(24, push_stack);
+    OPCODE_WRITEME(25, put_wind_prop);
+    OPCODE_WRITEME(26, print_form);
+    OPCODE_WRITEME(27, make_menu);
+    OPCODE_WRITEME(28, picture_table);
+    OPCODE_WRITEME(29, buffer_screen);
+    opcodes = GOpcodes;
+
+    #undef OPCODE
+    #undef OPCODE_WRITEME
+} // initOpcodeTable
 
 int main(int argc, char **argv)
 {
@@ -360,6 +416,8 @@ int main(int argc, char **argv)
 
     FIXME("in ver6+, this is the address of a main() routine, not a raw instruction address.");
     GPC = GStory + GHeader.pc_start;
+    initOpcodeTable(GHeader.version);
+
     while (!GQuit)
         runInstruction();
 
