@@ -204,10 +204,13 @@ static void opcode_call(void)
 {
     uint8fast args = GOperandCount;
     const uint16 *operands = GOperands;
-    const uint16 store = *(GPC++);
+    const uint16 storeid = *(GPC++);
     // no idea if args==0 should be the same as calling addr 0...
     if ((args == 0) || (operands[0] == 0))  // legal no-op; store 0 to return value and bounce.
-        *(varAddress(store)) = 0;
+    {
+        uint8 *store = varAddress(storeid);
+        WRITEUI16(store, 0);
+    } // if
     else
     {
         const uint8 *routine = unpackAddress(operands[0]);
@@ -218,7 +221,7 @@ static void opcode_call(void)
 
         FIXME("check for stack overflow here");
 
-        *(GSP++) = store;  // save where we should store the call's result.
+        *(GSP++) = storeid;  // save where we should store the call's result.
 
         // next instruction to run upon return.
         const uint32 pcoffset = (uint32) (GPC - GStory);
@@ -233,10 +236,8 @@ static void opcode_call(void)
         sint8fast i;
         if (GHeader.version <= 4)
         {
-            FIXME("READUI16 has a side-effect");
-            for (i = 0; i < numlocals; i++) {
-                *(GSP++) = READUI16(routine);
-            }  // for
+            for (i = 0; i < numlocals; i++, routine += sizeof (uint16))
+                *(GSP++) = *routine;  // leave it byteswapped when moving to the stack.
         } // if
         else
         {
@@ -338,8 +339,12 @@ static void opcode_and(void)
 
 static void opcode_inc_chk(void)
 {
-    uint16 *addr = (uint16 *) varAddress((uint8fast) GOperands[0]);
-    doBranch((++(*addr) > GOperands[0]) ? 1 : 0);
+    uint8 *store = varAddress((uint8fast) GOperands[0]);
+    uint16 val = READUI16(store);
+    store -= sizeof (uint16);
+    val++;
+    WRITEUI16(store, val);
+    doBranch((val > GOperands[1]) ? 1 : 0);
 } // opcode_inc_chk
 
 static void opcode_loadw(void)
@@ -372,7 +377,11 @@ static int parseOperand(const uint8fast optype, uint16fast *operand)
     {
         case 0: *operand = (uint16) READUI16(GPC); return 1;  // large constant (uint16)
         case 1: *operand = *(GPC++); return 1;  // small constant (uint8)
-        case 2: *operand = *varAddress(*(GPC++)); return 1; // variable
+        case 2: { // variable
+            const uint8 *addr = varAddress(*(GPC++));
+            *operand = READUI16(addr);
+            return 1;
+        }
         case 3: break;  // omitted altogether, we're done.
     } // switch
 
