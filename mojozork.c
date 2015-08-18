@@ -158,13 +158,29 @@ static uint8 *unpackAddress(const uint32fast addr)
     return NULL;
 } // unpackAddress
 
-static uint8 *varAddress(const uint8fast var)
+static uint8 *varAddress(const uint8fast var, const int writing)
 {
     if (var == 0) // top of stack
     {
-        FIXME("this needs to decrement stack if reading, increment if writing");
-        FIXME("check for stack overflow/underflow");
-        return (uint8 *) GSP++;
+        if (writing)
+        {
+            if ((GSP-GStack) >= (sizeof (GStack) / sizeof (GStack[0])))
+                die("Stack overflow");
+            dbg("push stack\n");
+            return (uint8 *) GSP++;
+        } // if
+        else
+        {
+            if (GBP == 0)
+                die("Stack underflow");  // nothing on the stack at all?
+
+            const uint16fast numlocals = GStack[GBP-1];
+            if ((GBP + numlocals) >= (GSP-GStack))
+                die("Stack underflow");  // no stack data left in this frame.
+
+            dbg("pop stack\n");
+            return (uint8 *) --GSP;
+        } // else
     } // if
 
     else if ((var >= 0x1) && (var <= 0xF))  // local var.
@@ -189,7 +205,7 @@ static void doBranch(int truth)
     {
         sint16fast offset = (sint16fast) (branch & 0x3F);
         if (farjump)
-            offset = (offset << 8) | ((uint16fast) byte2);
+            offset = (byte2 << 8) | ((uint16fast) offset);
 
         if (offset == 0)  // return false from current routine.
             die("write me");
@@ -208,7 +224,7 @@ static void opcode_call(void)
     // no idea if args==0 should be the same as calling addr 0...
     if ((args == 0) || (operands[0] == 0))  // legal no-op; store 0 to return value and bounce.
     {
-        uint8 *store = varAddress(storeid);
+        uint8 *store = varAddress(storeid, 1);
         WRITEUI16(store, 0);
     } // if
     else
@@ -237,7 +253,7 @@ static void opcode_call(void)
         if (GHeader.version <= 4)
         {
             for (i = 0; i < numlocals; i++, routine += sizeof (uint16))
-                *(GSP++) = *routine;  // leave it byteswapped when moving to the stack.
+                *(GSP++) = *((uint16 *) routine);  // leave it byteswapped when moving to the stack.
         } // if
         else
         {
@@ -250,8 +266,11 @@ static void opcode_call(void)
             args = numlocals;
 
         const uint16 *src = operands + 1;
-        uint16 *dst = GStack + GBP;
-        memcpy(dst, src, args * sizeof (uint16));
+        uint8 *dst = (uint8 *) (GStack + GBP);
+        for (i = 0; i < args; i++)
+        {
+            WRITEUI16(dst, src[i]);
+        } // for
 
         GPC = routine;
         // next call to runInstruction() will execute new routine.
@@ -260,14 +279,14 @@ static void opcode_call(void)
 
 static void opcode_add(void)
 {
-    uint8 *store = varAddress(*(GPC++));
+    uint8 *store = varAddress(*(GPC++), 1);
     const sint16 result = ((sint16) GOperands[0]) + ((sint16) GOperands[1]);
     WRITEUI16(store, result);
 } // opcode_add
 
 static void opcode_sub(void)
 {
-    uint8 *store = varAddress(*(GPC++));
+    uint8 *store = varAddress(*(GPC++), 1);
     const sint16 result = ((sint16) GOperands[0]) - ((sint16) GOperands[1]);
     WRITEUI16(store, result);
 } // opcode_sub
@@ -300,7 +319,7 @@ static void opcode_jl(void)
 
 static void opcode_div(void)
 {
-    uint8 *store = varAddress(*(GPC++));
+    uint8 *store = varAddress(*(GPC++), 1);
     if (GOperands[1] == 0)
         die("Division by zero");
     const uint16 result = (uint16) (((sint16) GOperands[0]) / ((sint16) GOperands[1]));
@@ -309,7 +328,7 @@ static void opcode_div(void)
 
 static void opcode_mod(void)
 {
-    uint8 *store = varAddress(*(GPC++));
+    uint8 *store = varAddress(*(GPC++), 1);
     if (GOperands[1] == 0)
         die("Division by zero");
     const uint16 result = (uint16) (((sint16) GOperands[0]) % ((sint16) GOperands[1]));
@@ -318,28 +337,28 @@ static void opcode_mod(void)
 
 static void opcode_mul(void)
 {
-    uint8 *store = varAddress(*(GPC++));
+    uint8 *store = varAddress(*(GPC++), 1);
     const uint16 result = (uint16) (((sint16) GOperands[0]) * ((sint16) GOperands[1]));
     WRITEUI16(store, result);
 } // opcode_mul
 
 static void opcode_or(void)
 {
-    uint8 *store = varAddress(*(GPC++));
+    uint8 *store = varAddress(*(GPC++), 1);
     const uint16 result = (GOperands[0] | GOperands[1]);
     WRITEUI16(store, result);
 } // opcode_or
 
 static void opcode_and(void)
 {
-    uint8 *store = varAddress(*(GPC++));
+    uint8 *store = varAddress(*(GPC++), 1);
     const uint16 result = (GOperands[0] & GOperands[1]);
     WRITEUI16(store, result);
 } // opcode_and
 
 static void opcode_inc_chk(void)
 {
-    uint8 *store = varAddress((uint8fast) GOperands[0]);
+    uint8 *store = varAddress((uint8fast) GOperands[0], 1);
     uint16 val = READUI16(store);
     store -= sizeof (uint16);
     val++;
@@ -349,7 +368,7 @@ static void opcode_inc_chk(void)
 
 static void opcode_loadw(void)
 {
-    uint16 *store = (uint16 *) varAddress(*(GPC++));
+    uint16 *store = (uint16 *) varAddress(*(GPC++), 1);
     FIXME("can only read from dynamic or static memory (not highmem).");
     FIXME("how does overflow work here? Do these wrap around?");
     uint16 *src = (uint16 *) (GStory + (GOperands[0] + (GOperands[1] * 2)));
@@ -371,14 +390,14 @@ static Opcode GOpcodes[256];
 static Opcode GExtendedOpcodes[30];
 
 
-static int parseOperand(const uint8fast optype, uint16fast *operand)
+static int parseOperand(const uint8fast optype, uint16 *operand)
 {
     switch (optype)
     {
         case 0: *operand = (uint16) READUI16(GPC); return 1;  // large constant (uint16)
         case 1: *operand = *(GPC++); return 1;  // small constant (uint8)
         case 2: { // variable
-            const uint8 *addr = varAddress(*(GPC++));
+            const uint8 *addr = varAddress(*(GPC++), 0);
             *operand = READUI16(addr);
             return 1;
         }
@@ -388,7 +407,7 @@ static int parseOperand(const uint8fast optype, uint16fast *operand)
     return 0;
 } // parseOperand
 
-static uint8fast parseVarOperands(uint16fast *operands)
+static uint8fast parseVarOperands(uint16 *operands)
 {
     const uint8fast operandTypes = *(GPC++);
     uint8fast shifter = 6;
