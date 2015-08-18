@@ -73,6 +73,8 @@ static const uint8 *GPC = 0;
 static uint16fast GLogicalPC = 0;
 static int GQuit = 0;
 static uint16 GStack[2048];  // !!! FIXME: make this dynamic?
+static uint16fast GOperands[8];
+static uint8fast GOperandCount = 0;
 static uint16 *GSP = NULL;  // stack pointer
 static uint16fast GBP = 0;  // base pointer
 
@@ -174,39 +176,10 @@ static uint16 *varAddress(const uint8fast var)
     return ((uint16 *) (GStory + GHeader.globals_addr)) + (var-0x10);
 } // varAddress
 
-static uint8fast parseVarOperands(uint16fast *operands)
-{
-    const uint8fast operandTypes = *(GPC++);
-    uint8fast shifter = 6;
-    uint8fast i;
-
-    for (i = 0; i < 4; i++)
-    {
-        const uint8fast optype = (operandTypes >> shifter) & 0x3;
-        shifter -= 2;
-        switch (optype)
-        {
-            case 0:  // large constant (uint16)
-                *(operands++) = (uint16) READUI16(GPC);
-                break;
-            case 1:  // small constant (uint8)
-                *(operands++) = *(GPC++);
-                break;
-            case 2:  // variable
-                *(operands++) = *varAddress(*(GPC++));
-                break;
-            case 3:  // omitted altogether, we're done.
-                return i;
-        } // switch
-    } // for
-
-    return 4;
-} // parseVarOperands
-
 static void opcode_call(void)
 {
-    uint16fast operands[4];
-    uint8fast args = parseVarOperands(operands);
+    uint8fast args = GOperandCount;
+    const uint16fast *operands = GOperands;
     uint16 *store = varAddress(*(GPC++));
     // no idea if args==0 should be the same as calling addr 0...
     if ((args == 0) || (operands[0] == 0))  // legal no-op; store 0 to return value and bounce.
@@ -249,7 +222,7 @@ static void opcode_call(void)
         if (args > numlocals)  // it's legal to have more args than locals, throw away the extras.
             args = numlocals;
 
-        uint16 *src = operands + 1;
+        const uint16fast *src = operands + 1;
         uint16 *dst = GStack + GBP;
         for (i = 0; i < args; i++)  // store our call arguments into the locals.
             *(dst++) = *(src++);
@@ -266,27 +239,98 @@ typedef struct
     OpcodeFn fn;
 } Opcode;
 
-// this is kinda wasteful (there are 120 opcodes scattered around these),
-//  but it simplifies some things to just have a big linear array.
+// this is kinda wasteful (we could pack the 89 opcodes in their various forms
+//  into separate arrays and strip off the metadata bits) but it simplifies
+//  some things to just have a big linear array.
 static Opcode GOpcodes[256];
+
+// The extended ones, however, only have one form, so we pack that tight.
 static Opcode GExtendedOpcodes[30];
+
+
+static int parseOperand(const uint8fast optype, uint16fast *operand)
+{
+    switch (optype)
+    {
+        case 0: *operand = (uint16) READUI16(GPC); return 1;  // large constant (uint16)
+        case 1: *operand = *(GPC++); return 1;  // small constant (uint8)
+        case 2: *operand = *varAddress(*(GPC++)); return 1; // variable
+        case 3: break;  // omitted altogether, we're done.
+    } // switch
+
+    return 0;
+} // parseOperand
+
+static uint8fast parseVarOperands(uint16fast *operands)
+{
+    const uint8fast operandTypes = *(GPC++);
+    uint8fast shifter = 6;
+    uint8fast i;
+
+    for (i = 0; i < 4; i++)
+    {
+        const uint8fast optype = (operandTypes >> shifter) & 0x3;
+        shifter -= 2;
+        if (!parseOperand(optype, operands + i))
+            break;
+    } // for
+
+    return i;
+} // parseVarOperands
+
 
 static void runInstruction(void)
 {
-    FIXME("lots of missing instructions here.  :)");
     FIXME("verify PC is sane");
+
     GLogicalPC = (uint16fast) (GPC - GStory);
     uint8 opcode = *(GPC++);
 
-    const int extended = (opcode == 190) ? 1 : 0;
+    const Opcode *op = NULL;
+
+    const int extended = ((opcode == 190) && (GHeader.version >= 5)) ? 1 : 0;
     if (extended)
     {
         opcode = *(GPC++);
         if (opcode >= (sizeof (GExtendedOpcodes) / sizeof (GExtendedOpcodes[0])))
             die("Unsupported or unknown extended opcode #%u", (unsigned int) opcode);
+        GOperandCount = parseVarOperands(GOperands);
+        op = &GExtendedOpcodes[opcode];
     } // if
+    else
+    {
+        if (opcode <= 127)  // 2OP
+        {
+            GOperandCount = 2;
+            parseOperand(((opcode >> 6) & 0x1) ? 2 : 1, GOperands + 0);
+            parseOperand(((opcode >> 5) & 0x1) ? 2 : 1, GOperands + 1);
+        } // if
 
-    const Opcode *op = extended ? &GExtendedOpcodes[opcode] : &GOpcodes[opcode];
+        else if (opcode <= 175)  // 1OP
+        {
+            GOperandCount = 1;
+            const uint8fast optype = (opcode >> 4) & 0x3;
+            parseOperand(optype, GOperands);  // 1OP or 0OP
+        } // else if
+
+        //else if (opcode <= 191)  // 0OP
+        else if (opcode > 191)  // VAR
+        {
+            const int takes8 = ((opcode == 236) || (opcode == 250));  // call_vs2 and call_vn2 take up to EIGHT arguments!
+            if (!takes8)
+                GOperandCount = parseVarOperands(GOperands);
+            else
+            {
+                GOperandCount = parseVarOperands(GOperands);
+                if (GOperandCount == 4)
+                    GOperandCount += parseVarOperands(GOperands + 4);
+                else
+                    GPC++;  // skip the next byte, since we don't have any more args.
+            } // else
+        } // else
+
+        op = &GOpcodes[opcode];
+    } // if
 
     if (!op->name)
         die("Unsupported or unknown %sopcode #%u", extended ? "extended " : "", (unsigned int) opcode);
@@ -301,6 +345,8 @@ static void runInstruction(void)
 
 static void initOpcodeTable(const uint8fast version)
 {
+    FIXME("lots of missing instructions here.  :)");
+
     memset(GOpcodes, '\0', sizeof (GOpcodes));
     memset(GExtendedOpcodes, '\0', sizeof (GExtendedOpcodes));
 
@@ -497,6 +543,18 @@ static void initOpcodeTable(const uint8fast version)
     #undef OPCODE_WRITEME
 } // initOpcodeTable
 
+static void finalizeOpcodeTable(void)
+{
+    uint8fast i;
+    for (i = 32; i <= 127; i++)  // 2OP opcodes repeating with different operand forms.
+        GOpcodes[i] = GOpcodes[i % 32];
+    for (i = 144; i <= 175; i++)  // 1OP opcodes repeating with different operand forms.
+        GOpcodes[i] = GOpcodes[128 + (i % 16)];
+    for (i = 192; i <= 223; i++)  // 2OP opcodes repeating with VAR operand forms.
+        GOpcodes[i] = GOpcodes[i % 32];
+} // finalizeOpcodeTable
+
+
 int main(int argc, char **argv)
 {
     const char *fname = argv[1] ? argv[1] : "zork1.dat";
@@ -522,6 +580,7 @@ int main(int argc, char **argv)
         die("FIXME: only version 3 is supported right now, this is %d", (int) GHeader.version);
 
     initOpcodeTable(GHeader.version);
+    finalizeOpcodeTable();
 
     FIXME("in ver6+, this is the address of a main() routine, not a raw instruction address.");
     GPC = GStory + GHeader.pc_start;
