@@ -44,6 +44,9 @@ typedef int_fast32_t sint32fast;
 
 typedef size_t uintptr;
 
+#define READUI8(ptr) *(ptr++)
+#define READUI16(ptr) ((((uint16fast) ptr[0]) << 8) | ((uint16fast) ptr[1])); ptr += sizeof (uint16)
+
 typedef struct ZHeader
 {
     uint8fast version;
@@ -66,8 +69,12 @@ typedef struct ZHeader
 static uint8 *GStory = NULL;
 static uintptr GStoryLen = 0;
 static ZHeader GHeader;
-static uint8 *GPC = 0;
+static const uint8 *GPC = 0;
+static uint16fast GLogicalPC = 0;
 static int GQuit = 0;
+static uint16 GStack[2048];  // !!! FIXME: make this dynamic?
+static uint16 *GSP = NULL;  // stack pointer
+static uint16fast GBP = 0;  // base pointer
 
 static void die(const char *fmt, ...) NORETURN;
 static void die(const char *fmt, ...)
@@ -78,6 +85,7 @@ static void die(const char *fmt, ...)
     va_start(ap, fmt);
     vfprintf(stderr, fmt, ap);
     va_end(ap);
+    fprintf(stderr, " (pc=%X)\n", (unsigned int) GLogicalPC);
     fprintf(stderr, "\n");
     fflush(stderr);
     fflush(stdout);
@@ -104,29 +112,25 @@ static void loadStory(const char *fname)
     memset(&GHeader, '\0', sizeof (GHeader));
     const uint8 *ptr = GStory;
 
-    #define READUI8() *(ptr++)
-    #define READUI16() (((uint16fast) ptr[0]) << 8) | ((uint16fast) ptr[1]); ptr += sizeof (uint16)
-    GHeader.version = READUI8();
-    GHeader.flags1 = READUI8();
-    GHeader.release = READUI16();
-    GHeader.himem_addr = READUI16();
-    GHeader.pc_start = READUI16();
-    GHeader.dict_addr = READUI16();
-    GHeader.objtab_addr = READUI16();
-    GHeader.globals_addr = READUI16();
-    GHeader.staticmem_addr = READUI16();
-    GHeader.flags2 = READUI16();
-    GHeader.serial_code[0] = READUI8();
-    GHeader.serial_code[1] = READUI8();
-    GHeader.serial_code[2] = READUI8();
-    GHeader.serial_code[3] = READUI8();
-    GHeader.serial_code[4] = READUI8();
-    GHeader.serial_code[5] = READUI8();
-    GHeader.abbrtab_addr = READUI16();
-    GHeader.story_len = READUI16();
-    GHeader.story_checksum = READUI16();
-    #undef READUI8
-    #undef READUI16
+    GHeader.version = READUI8(ptr);
+    GHeader.flags1 = READUI8(ptr);
+    GHeader.release = READUI16(ptr);
+    GHeader.himem_addr = READUI16(ptr);
+    GHeader.pc_start = READUI16(ptr);
+    GHeader.dict_addr = READUI16(ptr);
+    GHeader.objtab_addr = READUI16(ptr);
+    GHeader.globals_addr = READUI16(ptr);
+    GHeader.staticmem_addr = READUI16(ptr);
+    GHeader.flags2 = READUI16(ptr);
+    GHeader.serial_code[0] = READUI8(ptr);
+    GHeader.serial_code[1] = READUI8(ptr);
+    GHeader.serial_code[2] = READUI8(ptr);
+    GHeader.serial_code[3] = READUI8(ptr);
+    GHeader.serial_code[4] = READUI8(ptr);
+    GHeader.serial_code[5] = READUI8(ptr);
+    GHeader.abbrtab_addr = READUI16(ptr);
+    GHeader.story_len = READUI16(ptr);
+    GHeader.story_checksum = READUI16(ptr);
 
     fclose(io);
     GStoryLen = (uintptr) len;
@@ -134,23 +138,125 @@ static void loadStory(const char *fname)
 
 typedef void (*OpcodeFn)(void);
 
-
-//#define VERIFY_OPCODE(name, minver)
-static inline void VERIFY_OPCODE(const char *name, const uint16fast minver)
+// The Z-Machine can't directly address 32-bits, but this needs to expands past 16 bits when we multiply by 2, 4, or 8, etc.
+static uint8 *unpackAddress(const uint32fast addr)
 {
-    if (GHeader.version < minver)
+    if (GHeader.version <= 3)
+        return (GStory + (addr * 2));
+    else if (GHeader.version <= 5)
+        return (GStory + (addr * 4));
+    else if (GHeader.version <= 6)
+        die("write me");  //   4P + 8R_O    Versions 6 and 7, for routine calls ... or 4P + 8S_O    Versions 6 and 7, for print_paddr
+    else if (GHeader.version <= 8)
+        return (GStory + (addr * 8));
+
+    die("FIXME Unsupported version for packed addressing");
+    return NULL;
+} // unpackAddress
+
+static uint16 *varAddress(const uint8fast var)
+{
+    if (var == 0) // top of stack
     {
-        const uint8 *op = GPC-1;
-        die("Opcode #%u ('%s') not available in version %u at pc %u",
-            (unsigned int) *op, name, (unsigned int) GHeader.version,
-            (unsigned int) (GStory-op));
+        FIXME("this needs to decrement stack if reading, increment if writing");
+        FIXME("check for stack overflow/underflow");
+        return GSP++;
     } // if
-} // VERIFY_OPCODE
+
+    else if ((var >= 0x1) && (var <= 0xF))  // local var.
+    {
+        if (GStack[GBP-1] <= (var-1))
+            die("referenced unallocated local var #%u (%u available)", (unsigned int) (var-1), (unsigned int) GStack[GBP-1]);
+        return &GStack[GBP + (var-1)];
+    } // else if
+
+    // else, global var
+    return ((uint16 *) (GStory + GHeader.globals_addr)) + (var-0x10);
+} // varAddress
+
+static uint8fast parseVarOperands(uint16fast *operands)
+{
+    const uint8fast operandTypes = *(GPC++);
+    uint8fast shifter = 6;
+    uint8fast i;
+
+    for (i = 0; i < 4; i++)
+    {
+        const uint8fast optype = (operandTypes >> shifter) & 0x3;
+        shifter -= 2;
+        switch (optype)
+        {
+            case 0:  // large constant (uint16)
+                *(operands++) = (uint16) READUI16(GPC);
+                break;
+            case 1:  // small constant (uint8)
+                *(operands++) = *(GPC++);
+                break;
+            case 2:  // variable
+                *(operands++) = *varAddress(*(GPC++));
+                break;
+            case 3:  // omitted altogether, we're done.
+                return i;
+        } // switch
+    } // for
+
+    return 4;
+} // parseVarOperands
 
 static void opcode_call(void)
 {
-    VERIFY_OPCODE("call", 1);
-    die("write me");
+    uint16fast operands[4];
+    uint8fast args = parseVarOperands(operands);
+    uint16 *store = varAddress(*(GPC++));
+    // no idea if args==0 should be the same as calling addr 0...
+    if ((args == 0) || (operands[0] == 0))  // legal no-op; store 0 to return value and bounce.
+        *store = 0;
+    else
+    {
+        const uint8 *routine = unpackAddress(operands[0]);
+        GLogicalPC = (uint16fast) (routine - GStory);
+        const uint8fast numlocals = *(routine++);
+        if (numlocals > 15)
+            die("Routine has too many local variables (%u)", numlocals);
+
+        FIXME("check for stack overflow here");
+
+        // next instruction to run upon return.
+        const uint32 pcoffset = (uint32) (GPC - GStory);
+        *(GSP++) = (pcoffset & 0xFFFF);
+        *(GSP++) = ((pcoffset >> 16) & 0xFFFF);
+
+        *(GSP++) = GBP;  // current base pointer before the call.
+        *(GSP++) = numlocals;  // number of locals we're allocating.
+
+        GBP = (uint16fast) (GSP-GStack);
+
+        sint8fast i;
+        if (GHeader.version <= 4)
+        {
+            FIXME("READUI16 has a side-effect");
+            for (i = 0; i < numlocals; i++) {
+                *(GSP++) = READUI16(routine);
+            }  // for
+        } // if
+        else
+        {
+            for (i = 0; i < numlocals; i++)
+                *(GSP++) = 0;
+        } // else
+
+        args--;  // remove the return address from the count.
+        if (args > numlocals)  // it's legal to have more args than locals, throw away the extras.
+            args = numlocals;
+
+        uint16 *src = operands + 1;
+        uint16 *dst = GStack + GBP;
+        for (i = 0; i < args; i++)  // store our call arguments into the locals.
+            *(dst++) = *(src++);
+
+        GPC = routine;
+        // next call to runInstruction() will execute new routine.
+    } // else
 } // opcode_call
 
 
@@ -169,6 +275,7 @@ static void runInstruction(void)
 {
     FIXME("lots of missing instructions here.  :)");
     FIXME("verify PC is sane");
+    GLogicalPC = (uint16fast) (GPC - GStory);
     uint8 opcode = *(GPC++);
 
     const int extended = (opcode == 190) ? 1 : 0;
@@ -187,7 +294,7 @@ static void runInstruction(void)
         die("Unimplemented %sopcode #%d ('%s')", extended ? "extended " : "", (unsigned int) opcode, op->name);
     else
     {
-        dbg("pc=%u %sopcode=%u ('%s')\n", (((unsigned int) (GStory-GPC))-1) - extended, extended ? "ext " : "", opcode, op->name);
+        dbg("pc=%X %sopcode=%u ('%s')\n", (unsigned int) GLogicalPC, extended ? "ext " : "", opcode, op->name);
         op->fn();
     } // else
 } // runInstruction
@@ -399,24 +506,27 @@ int main(int argc, char **argv)
     dbg(" - version %u\n", (unsigned int) GHeader.version);
     dbg(" - flags 0x%X\n", (unsigned int) GHeader.flags1);
     dbg(" - release %u\n", (unsigned int) GHeader.release);
-    dbg(" - high memory addr %u\n", (unsigned int) GHeader.himem_addr);
-    dbg(" - program counter start %u\n", (unsigned int) GHeader.pc_start);
-    dbg(" - dictionary address %u\n", (unsigned int) GHeader.dict_addr);
-    dbg(" - object table address %u\n", (unsigned int) GHeader.objtab_addr);
-    dbg(" - globals address %u\n", (unsigned int) GHeader.globals_addr);
-    dbg(" - static memory address %u\n", (unsigned int) GHeader.staticmem_addr);
+    dbg(" - high memory addr %X\n", (unsigned int) GHeader.himem_addr);
+    dbg(" - program counter start %X\n", (unsigned int) GHeader.pc_start);
+    dbg(" - dictionary address %X\n", (unsigned int) GHeader.dict_addr);
+    dbg(" - object table address %X\n", (unsigned int) GHeader.objtab_addr);
+    dbg(" - globals address %X\n", (unsigned int) GHeader.globals_addr);
+    dbg(" - static memory address %X\n", (unsigned int) GHeader.staticmem_addr);
     dbg(" - flags2 0x%X\n", (unsigned int) GHeader.flags2);
     dbg(" - serial '%s'\n", GHeader.serial_code);
-    dbg(" - abbreviations table address %u\n", (unsigned int) GHeader.abbrtab_addr);
+    dbg(" - abbreviations table address %X\n", (unsigned int) GHeader.abbrtab_addr);
     dbg(" - story length %u\n", (unsigned int) GHeader.story_len);
     dbg(" - story checksum 0x%X\n", (unsigned int) GHeader.story_checksum);
 
     if (GHeader.version != 3)
         die("FIXME: only version 3 is supported right now, this is %d", (int) GHeader.version);
 
+    initOpcodeTable(GHeader.version);
+
     FIXME("in ver6+, this is the address of a main() routine, not a raw instruction address.");
     GPC = GStory + GHeader.pc_start;
-    initOpcodeTable(GHeader.version);
+    GBP = 0;
+    GSP = GStack;
 
     while (!GQuit)
         runInstruction();
