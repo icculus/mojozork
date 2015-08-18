@@ -297,6 +297,45 @@ static void opcode_jl(void)
     doBranch(((sint16fast) GOperands[0]) < ((sint16fast) GOperands[1]));
 } // opcode_jl
 
+static void opcode_div(void)
+{
+    uint8 *store = varAddress(*(GPC++));
+    if (GOperands[1] == 0)
+        die("Division by zero");
+    const uint16 result = (uint16) (((sint16) GOperands[0]) / ((sint16) GOperands[1]));
+    WRITEUI16(store, result);
+} // opcode_div
+
+static void opcode_mod(void)
+{
+    uint8 *store = varAddress(*(GPC++));
+    if (GOperands[1] == 0)
+        die("Division by zero");
+    const uint16 result = (uint16) (((sint16) GOperands[0]) % ((sint16) GOperands[1]));
+    WRITEUI16(store, result);
+} // opcode_div
+
+static void opcode_mul(void)
+{
+    uint8 *store = varAddress(*(GPC++));
+    const uint16 result = (uint16) (((sint16) GOperands[0]) * ((sint16) GOperands[1]));
+    WRITEUI16(store, result);
+} // opcode_mul
+
+static void opcode_or(void)
+{
+    uint8 *store = varAddress(*(GPC++));
+    const uint16 result = (GOperands[0] | GOperands[1]);
+    WRITEUI16(store, result);
+} // opcode_or
+
+static void opcode_and(void)
+{
+    uint8 *store = varAddress(*(GPC++));
+    const uint16 result = (GOperands[0] & GOperands[1]);
+    WRITEUI16(store, result);
+} // opcode_and
+
 static void opcode_inc_chk(void)
 {
     uint16 *addr = (uint16 *) varAddress((uint8fast) GOperands[0]);
@@ -417,7 +456,15 @@ static void runInstruction(void)
         die("Unimplemented %sopcode #%d ('%s')", extended ? "extended " : "", (unsigned int) opcode, op->name);
     else
     {
-        dbg("pc=%X %sopcode=%u ('%s')\n", (unsigned int) GLogicalPC, extended ? "ext " : "", opcode, op->name);
+        dbg("pc=%X %sopcode=%u ('%s') [", (unsigned int) GLogicalPC, extended ? "ext " : "", opcode, op->name);
+        if (GOperandCount)
+        {
+            uint8fast i;
+            for (i = 0; i < GOperandCount-1; i++)
+                dbg("%X,", (unsigned int) GOperands[i]);
+            dbg("%X", (unsigned int) GOperands[i]);
+        } // if
+        dbg("]\n");
         op->fn();
     } // else
 } // runInstruction
@@ -445,8 +492,8 @@ static void initOpcodeTable(const uint8fast version)
     OPCODE(5, inc_chk);
     OPCODE_WRITEME(6, jin);
     OPCODE_WRITEME(7, test);
-    OPCODE_WRITEME(8, or);
-    OPCODE_WRITEME(9, and);
+    OPCODE(8, or);
+    OPCODE(9, and);
     OPCODE_WRITEME(10, test_attr);
     OPCODE_WRITEME(11, set_attr);
     OPCODE_WRITEME(12, clear_attr);
@@ -459,9 +506,9 @@ static void initOpcodeTable(const uint8fast version)
     OPCODE_WRITEME(19, get_next_prop);
     OPCODE(20, add);
     OPCODE(21, sub);
-    OPCODE_WRITEME(22, mul);
-    OPCODE_WRITEME(23, div);
-    OPCODE_WRITEME(24, mod);
+    OPCODE(22, mul);
+    OPCODE(23, div);
+    OPCODE(24, mod);
 
     // 1-operand instructions...
     OPCODE(128, jz);
