@@ -44,8 +44,10 @@ typedef int_fast32_t sint32fast;
 
 typedef size_t uintptr;
 
+// !!! FIXME: maybe kill these.
 #define READUI8(ptr) *(ptr++)
 #define READUI16(ptr) ((((uint16fast) ptr[0]) << 8) | ((uint16fast) ptr[1])); ptr += sizeof (uint16)
+#define WRITEUI16(dst, src) { *(dst++) = (src >> 8) & 0xFF; *(dst++) = (src >> 0) & 0xFF; }
 
 typedef struct ZHeader
 {
@@ -73,7 +75,7 @@ static const uint8 *GPC = 0;
 static uint16fast GLogicalPC = 0;
 static int GQuit = 0;
 static uint16 GStack[2048];  // !!! FIXME: make this dynamic?
-static uint16fast GOperands[8];
+static uint16 GOperands[8];
 static uint8fast GOperandCount = 0;
 static uint16 *GSP = NULL;  // stack pointer
 static uint16fast GBP = 0;  // base pointer
@@ -156,34 +158,56 @@ static uint8 *unpackAddress(const uint32fast addr)
     return NULL;
 } // unpackAddress
 
-static uint16 *varAddress(const uint8fast var)
+static uint8 *varAddress(const uint8fast var)
 {
     if (var == 0) // top of stack
     {
         FIXME("this needs to decrement stack if reading, increment if writing");
         FIXME("check for stack overflow/underflow");
-        return GSP++;
+        return (uint8 *) GSP++;
     } // if
 
     else if ((var >= 0x1) && (var <= 0xF))  // local var.
     {
         if (GStack[GBP-1] <= (var-1))
             die("referenced unallocated local var #%u (%u available)", (unsigned int) (var-1), (unsigned int) GStack[GBP-1]);
-        return &GStack[GBP + (var-1)];
+        return (uint8 *) &GStack[GBP + (var-1)];
     } // else if
 
     // else, global var
-    return ((uint16 *) (GStory + GHeader.globals_addr)) + (var-0x10);
+    FIXME("check for overflow, etc");
+    return (GStory + GHeader.globals_addr) + (var-0x10);
 } // varAddress
+
+static void doBranch(int truth)
+{
+    const uint8 branch = *(GPC++);
+    const int farjump = (branch & (1<<6)) != 0;
+    const uint8 byte2 = farjump ? 0 : *(GPC++);
+    const int onTruth = (branch & (1<<7)) ? 1 : 0;
+    if (truth == onTruth)  // take the branch?
+    {
+        sint16fast offset = (sint16fast) (branch & 0x3F);
+        if (farjump)
+            offset = (offset << 8) | ((uint16fast) byte2);
+
+        if (offset == 0)  // return false from current routine.
+            die("write me");
+        else if (offset == 1)  // return true from current routine.
+            die("write me");
+        else
+            GPC = (GPC + offset) - 2;  // branch.
+    } // if
+} // doBranch
 
 static void opcode_call(void)
 {
     uint8fast args = GOperandCount;
-    const uint16fast *operands = GOperands;
-    uint16 *store = varAddress(*(GPC++));
+    const uint16 *operands = GOperands;
+    const uint16 store = *(GPC++);
     // no idea if args==0 should be the same as calling addr 0...
     if ((args == 0) || (operands[0] == 0))  // legal no-op; store 0 to return value and bounce.
-        *store = 0;
+        *(varAddress(store)) = 0;
     else
     {
         const uint8 *routine = unpackAddress(operands[0]);
@@ -193,6 +217,8 @@ static void opcode_call(void)
             die("Routine has too many local variables (%u)", numlocals);
 
         FIXME("check for stack overflow here");
+
+        *(GSP++) = store;  // save where we should store the call's result.
 
         // next instruction to run upon return.
         const uint32 pcoffset = (uint32) (GPC - GStory);
@@ -222,16 +248,69 @@ static void opcode_call(void)
         if (args > numlocals)  // it's legal to have more args than locals, throw away the extras.
             args = numlocals;
 
-        const uint16fast *src = operands + 1;
+        const uint16 *src = operands + 1;
         uint16 *dst = GStack + GBP;
-        for (i = 0; i < args; i++)  // store our call arguments into the locals.
-            *(dst++) = *(src++);
+        memcpy(dst, src, args * sizeof (uint16));
 
         GPC = routine;
         // next call to runInstruction() will execute new routine.
     } // else
 } // opcode_call
 
+static void opcode_add(void)
+{
+    uint8 *store = varAddress(*(GPC++));
+    const sint16 result = ((sint16) GOperands[0]) + ((sint16) GOperands[1]);
+    WRITEUI16(store, result);
+} // opcode_add
+
+static void opcode_sub(void)
+{
+    uint8 *store = varAddress(*(GPC++));
+    const sint16 result = ((sint16) GOperands[0]) - ((sint16) GOperands[1]);
+    WRITEUI16(store, result);
+} // opcode_sub
+
+static void opcode_je(void)
+{
+    const uint16fast a = GOperands[0];
+    sint8fast i;
+    for (i = 1; i < GOperandCount; i++)
+    {
+        if (a == GOperands[i])
+        {
+            doBranch(1);
+            return;
+        } // if
+    } // for
+
+    doBranch(0);
+} // opcode_je
+
+static void opcode_jz(void)
+{
+    doBranch((GOperands[0] == 0) ? 1 : 0);
+} // opcode_jz
+
+static void opcode_jl(void)
+{
+    doBranch(((sint16fast) GOperands[0]) < ((sint16fast) GOperands[1]));
+} // opcode_jl
+
+static void opcode_inc_chk(void)
+{
+    uint16 *addr = (uint16 *) varAddress((uint8fast) GOperands[0]);
+    doBranch((++(*addr) > GOperands[0]) ? 1 : 0);
+} // opcode_inc_chk
+
+static void opcode_loadw(void)
+{
+    uint16 *store = (uint16 *) varAddress(*(GPC++));
+    FIXME("can only read from dynamic or static memory (not highmem).");
+    FIXME("how does overflow work here? Do these wrap around?");
+    uint16 *src = (uint16 *) (GStory + (GOperands[0] + (GOperands[1] * 2)));
+    *store = *src;  // copy from bigendian to bigendian: no byteswap.
+} // opcode_loadw
 
 typedef struct
 {
@@ -359,11 +438,11 @@ static void initOpcodeTable(const uint8fast version)
     // most early Infocom games are version 3, but apparently ver1 is in the wild...
 
     // 2-operand instructions...
-    OPCODE_WRITEME(1, je);
-    OPCODE_WRITEME(2, jl);
+    OPCODE(1, je);
+    OPCODE(2, jl);
     OPCODE_WRITEME(3, jg);
     OPCODE_WRITEME(4, dec_chk);
-    OPCODE_WRITEME(5, inc_chk);
+    OPCODE(5, inc_chk);
     OPCODE_WRITEME(6, jin);
     OPCODE_WRITEME(7, test);
     OPCODE_WRITEME(8, or);
@@ -373,19 +452,19 @@ static void initOpcodeTable(const uint8fast version)
     OPCODE_WRITEME(12, clear_attr);
     OPCODE_WRITEME(13, store);
     OPCODE_WRITEME(14, insert_obj);
-    OPCODE_WRITEME(15, loadw);
+    OPCODE(15, loadw);
     OPCODE_WRITEME(16, loadb);
     OPCODE_WRITEME(17, get_prop);
     OPCODE_WRITEME(18, get_prop_addr);
     OPCODE_WRITEME(19, get_next_prop);
-    OPCODE_WRITEME(20, add);
-    OPCODE_WRITEME(21, sub);
+    OPCODE(20, add);
+    OPCODE(21, sub);
     OPCODE_WRITEME(22, mul);
     OPCODE_WRITEME(23, div);
     OPCODE_WRITEME(24, mod);
 
     // 1-operand instructions...
-    OPCODE_WRITEME(128, jz);
+    OPCODE(128, jz);
     OPCODE_WRITEME(129, get_sibling);
     OPCODE_WRITEME(130, get_child);
     OPCODE_WRITEME(131, get_parent);
