@@ -416,6 +416,49 @@ static void opcode_storew(void)
     WRITEUI16(dst, src);
 } // opcode_storew
 
+static void opcode_put_prop(void)
+{
+    const uint16fast objid = GOperands[0];
+    const uint16fast propid = GOperands[1];
+    const uint16fast value = GOperands[2];
+
+    if (GHeader.version <= 3)
+    {
+        uint8 *ptr = GStory + GHeader.objtab_addr;
+        ptr += 31 * sizeof (uint16);  // skip properties defaults table
+        ptr += 9 * (objid-1);  // find object in object table
+        ptr += 7;  // skip to properties address field.
+        const uint16fast addr = READUI16(ptr);
+        ptr = GStory + addr;
+        ptr += (*ptr * 2) + 1;  // skip object name to start of properties.
+        while (1)
+        {
+            const uint8 info = *(ptr++);
+            const uint16fast num = (info & 0x1F);  // 5 bits for the prop id.
+            const uint32 size = ((info >> 5) & 0x7) + 1; // 3 bits for prop size.
+            // these go in descending numeric order, and should fail
+            //  the interpreter if missing.
+            if (num < propid)
+                die("put_prop on missing object property (obj=%X, prop=%X, val=%x)", (unsigned int) objid, (unsigned int) propid, (unsigned int) value);
+            else if (num == propid)  // found it?
+            {
+                if (size == 1)
+                    *ptr = (value & 0xFF);
+                else
+                    *((uint16 *) ptr) = value;
+                return;
+            } // else if
+
+            ptr += size;  // try the next property.
+        } // while
+    } // if
+    else
+    {
+        die("write me");
+    } // else
+} // opcode_put_prop
+
+
 typedef struct
 {
     const char *name;
@@ -614,7 +657,7 @@ static void initOpcodeTable(const uint8fast version)
     OPCODE(224, call);
     OPCODE(225, storew);
     OPCODE_WRITEME(226, storeb);
-    OPCODE_WRITEME(227, put_prop);
+    OPCODE(227, put_prop);
     OPCODE_WRITEME(228, sread);
     OPCODE_WRITEME(229, print_char);
     OPCODE_WRITEME(230, print_num);
