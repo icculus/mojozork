@@ -68,6 +68,7 @@ typedef struct ZHeader
     // !!! FIXME: more fields here, all of which are ver4+
 } ZHeader;
 
+static uint32fast GInstructionsRun = 0;
 static uint8 *GStory = NULL;
 static uintptr GStoryLen = 0;
 static ZHeader GHeader;
@@ -90,6 +91,7 @@ static void die(const char *fmt, ...)
     vfprintf(stderr, fmt, ap);
     va_end(ap);
     fprintf(stderr, " (pc=%X)\n", (unsigned int) GLogicalPC);
+    fprintf(stderr, " %u instructions run\n", (unsigned int) GInstructionsRun);
     fprintf(stderr, "\n");
     fflush(stderr);
     fflush(stdout);
@@ -578,6 +580,7 @@ static void runInstruction(void)
         } // if
         dbg("]\n");
         op->fn();
+        GInstructionsRun++;
     } // else
 } // runInstruction
 
