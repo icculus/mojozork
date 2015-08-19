@@ -80,6 +80,7 @@ static uint16 GOperands[8];
 static uint8fast GOperandCount = 0;
 static uint16 *GSP = NULL;  // stack pointer
 static uint16fast GBP = 0;  // base pointer
+static char GAlphabetTable[78];
 
 static void die(const char *fmt, ...) NORETURN;
 static void die(const char *fmt, ...)
@@ -418,11 +419,42 @@ static void opcode_storew(void)
     WRITEUI16(dst, src);
 } // opcode_storew
 
+static void opcode_store(void)
+{
+    uint8 *store = varAddress((uint8fast) (GOperands[0] & 0xFF), 1);
+    const uint16 src = GOperands[1];
+    WRITEUI16(store, src);
+} // opcode_store
+
+static void opcode_test_attr(void)
+{
+    const uint16fast objid = GOperands[0];
+    const uint16fast attrid = GOperands[1];
+
+    FIXME("fail if attrid > some zmachine limit");
+    FIXME("fail if objid == 0");
+
+    if (GHeader.version <= 3)
+    {
+        uint8 *ptr = GStory + GHeader.objtab_addr;
+        ptr += 31 * sizeof (uint16);  // skip properties defaults table
+        ptr += 9 * (objid-1);  // find object in object table
+        ptr += (attrid / 8);
+        doBranch((*ptr & (0x80 >> (attrid & 7))) ? 1 : 0);
+    } // if
+    else
+    {
+        die("write me");
+    } // else
+} // opcode_test_attr
+
 static void opcode_put_prop(void)
 {
     const uint16fast objid = GOperands[0];
     const uint16fast propid = GOperands[1];
     const uint16fast value = GOperands[2];
+
+    FIXME("fail if objid == 0");
 
     if (GHeader.version <= 3)
     {
@@ -459,6 +491,58 @@ static void opcode_put_prop(void)
         die("write me");
     } // else
 } // opcode_put_prop
+
+static void opcode_new_line(void)
+{
+    putchar('\n');
+    fflush(stdout);
+} // opcode_new_line
+
+static void opcode_print(void)
+{
+    // ZCSII encoding is so nasty.
+    uint16fast code = 0;
+    uint8fast alphabet = 0;
+
+    do
+    {
+        code = READUI16(GPC);
+
+        // characters are 5 bits each, packed three to a 16-bit word.
+        const uint8fast chs[3] = { code >> 10, code >> 5, code };
+        uint8fast i;
+        for (i = 0; i < 3; i++)
+        {
+            int newshift = 0;
+            char printVal = 0;
+            const uint8fast ch = (chs[i] & 0x1F);
+
+            FIXME("ver1 and 2 have shift lock characters");
+            switch (ch)
+            {
+                case 0: printVal = ' '; break;
+                case 1: break; die("write me 1"); // ver2+: Abbreviation entry at offset (next char). ver1: newline
+                case 2: break; die("write me 2"); // ver3+: Abbreviation entry at offset 32(next char) ver1/2: shift alphabet
+                case 3: break; die("write me 3"); // ver3+: Abbreviation entry at offset 64(next char) ver1/2: shift alphabet
+                case 4: newshift = 1; alphabet = 1; break; // ver3+: shift to alphabet A1, ver1/2: shift lock alphabet
+                case 5: newshift = 1; alphabet = 2; break;  // ver3+: shift to alphabet A2, ver1/2: shift lock alphabet
+                default:
+                    if ((ch == 6) && (alphabet == 2))
+                        die("write me"); // next two chars make up a 10 bit ZSCII character.
+                    printVal = GAlphabetTable[(alphabet*26) + (ch-6)]; break;
+                    break;
+            } // switch
+
+            if (printVal)
+                putchar(printVal);
+
+            if (alphabet && !newshift)
+                alphabet = 0;
+        } // for
+
+        // there is no NULL terminator, you look for a word with the top bit set.
+    } while ((code & (1<<15)) == 0);
+} // opcode_print
 
 
 typedef struct
@@ -584,7 +668,50 @@ static void runInstruction(void)
     } // else
 } // runInstruction
 
-static void initOpcodeTable(const uint8fast version)
+static void initAlphabetTable(void)
+{
+    FIXME("ver5+ specifies alternate tables in the header");
+
+    char *ptr = GAlphabetTable;
+    uint8fast i;
+
+    // alphabet A0
+    for (i = 0; i < 26; i++)
+        *(ptr++) = 'a' + i;
+
+    // alphabet A1
+    for (i = 0; i < 26; i++)
+        *(ptr++) = 'A' + i;
+
+    // alphabet A2
+    *(ptr++) = '\0';
+
+    if (GHeader.version != 1)
+        *(ptr++) = '\n';
+
+    for (i = 0; i < 10; i++)
+        *(ptr++) = '0' + i;
+    *(ptr++) = '.';
+    *(ptr++) = ',';
+    *(ptr++) = '!';
+    *(ptr++) = '?';
+    *(ptr++) = '_';
+    *(ptr++) = '#';
+    *(ptr++) = '\'';
+    *(ptr++) = '"';
+    *(ptr++) = '/';
+    *(ptr++) = '\\';
+
+    if (GHeader.version == 1)
+        *(ptr++) = '<';
+
+    *(ptr++) = '-';
+    *(ptr++) = ':';
+    *(ptr++) = '(';
+    *(ptr++) = ')';
+} // initAlphabetTable
+
+static void initOpcodeTable(void)
 {
     FIXME("lots of missing instructions here.  :)");
 
@@ -609,10 +736,10 @@ static void initOpcodeTable(const uint8fast version)
     OPCODE_WRITEME(7, test);
     OPCODE(8, or);
     OPCODE(9, and);
-    OPCODE_WRITEME(10, test_attr);
+    OPCODE(10, test_attr);
     OPCODE_WRITEME(11, set_attr);
     OPCODE_WRITEME(12, clear_attr);
-    OPCODE_WRITEME(13, store);
+    OPCODE(13, store);
     OPCODE_WRITEME(14, insert_obj);
     OPCODE(15, loadw);
     OPCODE_WRITEME(16, loadb);
@@ -645,7 +772,7 @@ static void initOpcodeTable(const uint8fast version)
     // 0-operand instructions...
     OPCODE_WRITEME(176, rtrue);
     OPCODE_WRITEME(177, rfalse);
-    OPCODE_WRITEME(178, print);
+    OPCODE(178, print);
     OPCODE_WRITEME(179, print_ret);
     OPCODE_WRITEME(180, nop);
     OPCODE_WRITEME(181, save);
@@ -654,7 +781,7 @@ static void initOpcodeTable(const uint8fast version)
     OPCODE_WRITEME(184, ret_popped);
     OPCODE_WRITEME(185, pop);
     OPCODE_WRITEME(186, quit);
-    OPCODE_WRITEME(187, new_line);
+    OPCODE(187, new_line);
 
     // variable operand instructions...
     OPCODE(224, call);
@@ -668,7 +795,7 @@ static void initOpcodeTable(const uint8fast version)
     OPCODE_WRITEME(232, push);
     OPCODE_WRITEME(233, pull);
 
-    if (version < 3)  // most early Infocom games are version 3.
+    if (GHeader.version < 3)  // most early Infocom games are version 3.
         return;  // we're done.
 
     OPCODE_WRITEME(188, show_status);
@@ -679,7 +806,7 @@ static void initOpcodeTable(const uint8fast version)
     OPCODE_WRITEME(244, input_stream);
     OPCODE_WRITEME(245, sound_effect);
 
-    if (version < 4)
+    if (GHeader.version < 4)
         return;  // we're done.
 
     OPCODE_WRITEME(25, call_2s);
@@ -700,7 +827,7 @@ static void initOpcodeTable(const uint8fast version)
     opcodes[188].name = NULL;
     opcodes[188].fn = NULL;
 
-    if (version < 5)
+    if (GHeader.version < 5)
         return;  // we're done.
 
     OPCODE_WRITEME(26, call_2n);
@@ -744,7 +871,7 @@ static void initOpcodeTable(const uint8fast version)
     OPCODE_WRITEME(13, set_true_colour);
     opcodes = GOpcodes;
 
-    if (version < 6)
+    if (GHeader.version < 6)
         return;  // we're done.
 
     OPCODE_WRITEME(27, set_colour_ver6);
@@ -820,7 +947,8 @@ int main(int argc, char **argv)
     if (GHeader.version != 3)
         die("FIXME: only version 3 is supported right now, this is %d", (int) GHeader.version);
 
-    initOpcodeTable(GHeader.version);
+    initAlphabetTable();
+    initOpcodeTable();
     finalizeOpcodeTable();
 
     FIXME("in ver6+, this is the address of a main() routine, not a raw instruction address.");
