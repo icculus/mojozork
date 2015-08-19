@@ -171,10 +171,10 @@ static uint8 *varAddress(const uint8fast var, const int writing)
         } // if
         else
         {
-            if (GBP == 0)
+            if (GSP == GStack)
                 die("Stack underflow");  // nothing on the stack at all?
 
-            const uint16fast numlocals = GStack[GBP-1];
+            const uint16fast numlocals = GBP ? GStack[GBP-1] : 0;
             if ((GBP + numlocals) >= (GSP-GStack))
                 die("Stack underflow");  // no stack data left in this frame.
 
@@ -220,7 +220,7 @@ static void opcode_call(void)
 {
     uint8fast args = GOperandCount;
     const uint16 *operands = GOperands;
-    const uint16 storeid = *(GPC++);
+    const uint8fast storeid = *(GPC++);
     // no idea if args==0 should be the same as calling addr 0...
     if ((args == 0) || (operands[0] == 0))  // legal no-op; store 0 to return value and bounce.
     {
@@ -237,7 +237,7 @@ static void opcode_call(void)
 
         FIXME("check for stack overflow here");
 
-        *(GSP++) = storeid;  // save where we should store the call's result.
+        *(GSP++) = (uint16) storeid;  // save where we should store the call's result.
 
         // next instruction to run upon return.
         const uint32 pcoffset = (uint32) (GPC - GStory);
@@ -276,6 +276,31 @@ static void opcode_call(void)
         // next call to runInstruction() will execute new routine.
     } // else
 } // opcode_call
+
+static void opcode_ret(void)
+{
+    FIXME("newer versions start in a real routine, but still aren't allowed to return from it.");
+    if (GBP == 0)
+        die("Stack underflow in ret instruction");
+
+    dbg("popping stack for return\n");
+    dbg("returning: initial pc=%X, bp=%u, sp=%u\n", (unsigned int) (GPC-GStory), (unsigned int) GBP, (unsigned int) (GSP-GStack));
+
+    GSP = GStack + GBP;  // this dumps all the locals and data pushed on the stack during the routine.
+    GSP--;  // dump our copy of numlocals
+    GBP = *(--GSP);  // restore previous frame's base pointer, dump it from the stack.
+
+    GSP -= 2;  // point to start of our saved program counter.
+    const uint32 pcoffset = ((uint32) GSP[0]) | (((uint32) GSP[1]) << 16);
+
+    GPC = GStory + pcoffset;  // next instruction is one following our original call.
+
+    const uint8fast storeid = (uint8fast) *(--GSP);  // pop the result storage location.
+
+    dbg("returning: new pc=%X, bp=%u, sp=%u\n", (unsigned int) (GPC-GStory), (unsigned int) GBP, (unsigned int) (GSP-GStack));
+    uint8 *store = varAddress(storeid, 1);  // and store the routine result.
+    WRITEUI16(store, GOperands[0]);
+} // opcode_ret
 
 static void opcode_add(void)
 {
@@ -316,6 +341,13 @@ static void opcode_jl(void)
 {
     doBranch(((sint16fast) GOperands[0]) < ((sint16fast) GOperands[1]));
 } // opcode_jl
+
+static void opcode_jump(void)
+{
+    // this opcode is not a branch instruction, and doesn't follow those rules.
+    FIXME("make sure GPC is valid");
+    GPC = (GPC + ((sint16) GOperands[0])) - 2;
+} // opcode_jump
 
 static void opcode_div(void)
 {
@@ -374,6 +406,15 @@ static void opcode_loadw(void)
     uint16 *src = (uint16 *) (GStory + (GOperands[0] + (GOperands[1] * 2)));
     *store = *src;  // copy from bigendian to bigendian: no byteswap.
 } // opcode_loadw
+
+static void opcode_storew(void)
+{
+    FIXME("can only write to dynamic memory.");
+    FIXME("how does overflow work here? Do these wrap around?");
+    uint8 *dst = (GStory + (GOperands[0] + (GOperands[1] * 2)));
+    const uint16 src = GOperands[2];
+    WRITEUI16(dst, src);
+} // opcode_storew
 
 typedef struct
 {
@@ -549,8 +590,8 @@ static void initOpcodeTable(const uint8fast version)
     OPCODE_WRITEME(135, print_addr);
     OPCODE_WRITEME(137, remove_obj);
     OPCODE_WRITEME(138, print_obj);
-    OPCODE_WRITEME(139, ret);
-    OPCODE_WRITEME(140, jump);
+    OPCODE(139, ret);
+    OPCODE(140, jump);
     OPCODE_WRITEME(141, print_paddr);
     OPCODE_WRITEME(142, load);
     OPCODE_WRITEME(143, not);
@@ -571,7 +612,7 @@ static void initOpcodeTable(const uint8fast version)
 
     // variable operand instructions...
     OPCODE(224, call);
-    OPCODE_WRITEME(225, storew);
+    OPCODE(225, storew);
     OPCODE_WRITEME(226, storeb);
     OPCODE_WRITEME(227, put_prop);
     OPCODE_WRITEME(228, sread);
