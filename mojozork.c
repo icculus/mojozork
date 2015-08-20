@@ -410,6 +410,15 @@ static void opcode_loadw(void)
     *store = *src;  // copy from bigendian to bigendian: no byteswap.
 } // opcode_loadw
 
+static void opcode_loadb(void)
+{
+    uint8 *store = varAddress(*(GPC++), 1);
+    FIXME("can only read from dynamic or static memory (not highmem).");
+    FIXME("how does overflow work here? Do these wrap around?");
+    uint8 *src = GStory + (GOperands[0] + (GOperands[1]));
+    *store = *src;  // copy from 1 byte: no byteswap.
+} // opcode_loadb
+
 static void opcode_storew(void)
 {
     FIXME("can only write to dynamic memory.");
@@ -787,7 +796,7 @@ static void initOpcodeTable(void)
     OPCODE(13, store);
     OPCODE_WRITEME(14, insert_obj);
     OPCODE(15, loadw);
-    OPCODE_WRITEME(16, loadb);
+    OPCODE(16, loadb);
     OPCODE_WRITEME(17, get_prop);
     OPCODE_WRITEME(18, get_prop_addr);
     OPCODE_WRITEME(19, get_next_prop);
