@@ -280,7 +280,7 @@ static void opcode_call(void)
     } // else
 } // opcode_call
 
-static void opcode_ret(void)
+static void doReturn(const uint16fast val)
 {
     FIXME("newer versions start in a real routine, but still aren't allowed to return from it.");
     if (GBP == 0)
@@ -302,8 +302,23 @@ static void opcode_ret(void)
 
     dbg("returning: new pc=%X, bp=%u, sp=%u\n", (unsigned int) (GPC-GStory), (unsigned int) GBP, (unsigned int) (GSP-GStack));
     uint8 *store = varAddress(storeid, 1);  // and store the routine result.
-    WRITEUI16(store, GOperands[0]);
+    WRITEUI16(store, val);
+} // doReturn
+
+static void opcode_ret(void)
+{
+    doReturn(GOperands[0]);
 } // opcode_ret
+
+static void opcode_rtrue(void)
+{
+    doReturn(1);
+} // opcode_rtrue
+
+static void opcode_rfalse(void)
+{
+    doReturn(0);
+} // opcode_rfalse
 
 static void opcode_add(void)
 {
@@ -856,8 +871,8 @@ static void initOpcodeTable(void)
     OPCODE_WRITEME(143, not);
 
     // 0-operand instructions...
-    OPCODE_WRITEME(176, rtrue);
-    OPCODE_WRITEME(177, rfalse);
+    OPCODE(176, rtrue);
+    OPCODE(177, rfalse);
     OPCODE(178, print);
     OPCODE_WRITEME(179, print_ret);
     OPCODE_WRITEME(180, nop);
