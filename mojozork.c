@@ -507,6 +507,28 @@ static void opcode_new_line(void)
     fflush(stdout);
 } // opcode_new_line
 
+static void print_zscii_char(const uint16fast val)
+{
+    char ch = 0;
+
+    FIXME("ver6+ has a few more valid codes");
+
+    // only a few values are valid ZSCII codes for output.
+    if ((val >= 32) && (val <= 126))
+        ch = (char) val;  // FIXME: we assume you have an ASCII terminal for now.
+    else if (val == 13)  // newline
+        ch = '\n';
+    else if (val == 0)
+        /* val==0 is "valid" but produces no output. */ ;
+    else if ((val >= 155) && (val <= 251))
+        { FIXME("write me: extended ZSCII characters"); ch = '?'; }
+    else
+        ch = '?';  // this is illegal, but we'll be nice.
+
+    if (ch)
+        putchar(ch);
+} // print_zscii_char
+
 static uintptr print_zscii(const uint8 *_str, const int abbr)
 {
     // ZCSII encoding is so nasty.
@@ -597,6 +619,16 @@ static void opcode_print(void)
 {
     GPC += print_zscii(GPC, 0);
 } // opcode_print
+
+static void opcode_print_num(void)
+{
+    printf("%d", (int) GOperands[0]);
+} // opcode_print_num
+
+static void opcode_print_char(void)
+{
+    print_zscii_char(GOperands[0]);
+} // opcode_print_char
 
 
 typedef struct
@@ -843,8 +875,8 @@ static void initOpcodeTable(void)
     OPCODE_WRITEME(226, storeb);
     OPCODE(227, put_prop);
     OPCODE_WRITEME(228, sread);
-    OPCODE_WRITEME(229, print_char);
-    OPCODE_WRITEME(230, print_num);
+    OPCODE(229, print_char);
+    OPCODE(230, print_num);
     OPCODE_WRITEME(231, random);
     OPCODE_WRITEME(232, push);
     OPCODE_WRITEME(233, pull);
