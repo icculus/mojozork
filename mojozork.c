@@ -645,6 +645,10 @@ static void opcode_print_char(void)
     print_zscii_char(GOperands[0]);
 } // opcode_print_char
 
+static void opcode_nop(void)
+{
+    // that's all, folks.
+} // opcode_nop
 
 typedef struct
 {
@@ -875,7 +879,7 @@ static void initOpcodeTable(void)
     OPCODE(177, rfalse);
     OPCODE(178, print);
     OPCODE_WRITEME(179, print_ret);
-    OPCODE_WRITEME(180, nop);
+    OPCODE(180, nop);
     OPCODE_WRITEME(181, save);
     OPCODE_WRITEME(182, restore);
     OPCODE_WRITEME(183, restart);
