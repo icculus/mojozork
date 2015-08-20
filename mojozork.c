@@ -498,34 +498,72 @@ static void opcode_new_line(void)
     fflush(stdout);
 } // opcode_new_line
 
-static void opcode_print(void)
+static uintptr print_zscii(const uint8 *_str, const int abbr)
 {
     // ZCSII encoding is so nasty.
+    const uint8 *str = _str;
     uint16fast code = 0;
     uint8fast alphabet = 0;
+    uint8fast useAbbrTable = 0;
 
     do
     {
-        code = READUI16(GPC);
+        code = READUI16(str);
 
         // characters are 5 bits each, packed three to a 16-bit word.
-        const uint8fast chs[3] = { code >> 10, code >> 5, code };
-        uint8fast i;
-        for (i = 0; i < 3; i++)
+        sint8fast i;
+        for (i = 10; i >= 0; i -= 5)
         {
             int newshift = 0;
             char printVal = 0;
-            const uint8fast ch = (chs[i] & 0x1F);
+            const uint8fast ch = ((code >> i) & 0x1F);
 
-            FIXME("ver1 and 2 have shift lock characters");
+            if (useAbbrTable)
+            {
+                if (abbr)
+                    die("Abbreviation strings can't use abbreviations");
+                //FIXME("Make sure offset is sane");
+                const uintptr index = ((32 * (((uintptr) useAbbrTable) - 1)) + (uintptr) ch);
+                const uint8 *ptr = (GStory + GHeader.abbrtab_addr) + (index * sizeof (uint16));
+                const uint16fast abbraddr = READUI16(ptr);
+                print_zscii(GStory + (abbraddr * sizeof (uint16)), 1);
+                useAbbrTable = 0;
+                alphabet = 0;  // FIXME: no shift locking in ver3+, but ver1 needs it.
+                continue;
+            } // if
+
             switch (ch)
             {
-                case 0: printVal = ' '; break;
-                case 1: break; die("write me 1"); // ver2+: Abbreviation entry at offset (next char). ver1: newline
-                case 2: break; die("write me 2"); // ver3+: Abbreviation entry at offset 32(next char) ver1/2: shift alphabet
-                case 3: break; die("write me 3"); // ver3+: Abbreviation entry at offset 64(next char) ver1/2: shift alphabet
-                case 4: newshift = 1; alphabet = 1; break; // ver3+: shift to alphabet A1, ver1/2: shift lock alphabet
-                case 5: newshift = 1; alphabet = 2; break;  // ver3+: shift to alphabet A2, ver1/2: shift lock alphabet
+                case 0:
+                    printVal = ' ';
+                    break;
+
+                case 1:
+                    if (GHeader.version == 1)
+                        printVal = '\n';
+                    else
+                        useAbbrTable = 1;
+                    break;
+
+                case 2:
+                case 3:
+                    if (GHeader.version <= 2)
+                        die("write me: handle ver1/2 alphabet shifting");
+                    else
+                        useAbbrTable = ch;
+                    break;
+
+                case 4:
+                case 5:
+                    if (GHeader.version <= 2)
+                        die("write me: handle ver1/2 alphabet shift locking");
+                    else
+                    {
+                        newshift = 1;
+                        alphabet = ch - 3;
+                    } // else
+                    break;
+
                 default:
                     if ((ch == 6) && (alphabet == 2))
                         die("write me"); // next two chars make up a 10 bit ZSCII character.
@@ -542,6 +580,13 @@ static void opcode_print(void)
 
         // there is no NULL terminator, you look for a word with the top bit set.
     } while ((code & (1<<15)) == 0);
+
+    return str - _str;
+} // print_zscii
+
+static void opcode_print(void)
+{
+    GPC += print_zscii(GPC, 0);
 } // opcode_print
 
 
