@@ -496,6 +496,23 @@ static void opcode_test_attr(void)
     } // else
 } // opcode_test_attr
 
+static void opcode_set_attr(void)
+{
+    const uint16fast objid = GOperands[0];
+    const uint16fast attrid = GOperands[1];
+    uint8 *ptr = getObjectPtr(objid);
+
+    if (GHeader.version <= 3)
+    {
+        ptr += (attrid / 8);
+        *ptr |= 0x80 >> (attrid & 7);
+    } // if
+    else
+    {
+        die("write me");
+    } // else
+} // opcode_set_attr
+
 static uint8 *getObjectPtrParent(uint8 *objptr)
 {
     if (GHeader.version <= 3)
@@ -916,7 +933,7 @@ static void initOpcodeTable(void)
     OPCODE(8, or);
     OPCODE(9, and);
     OPCODE(10, test_attr);
-    OPCODE_WRITEME(11, set_attr);
+    OPCODE(11, set_attr);
     OPCODE_WRITEME(12, clear_attr);
     OPCODE(13, store);
     OPCODE(14, insert_obj);
