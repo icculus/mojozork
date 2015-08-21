@@ -450,19 +450,29 @@ static void opcode_store(void)
     WRITEUI16(store, src);
 } // opcode_store
 
+
+static uint8 *getObjectPtr(const uint16fast objid)
+{
+    if (objid == 0)
+        die("Object id #0 referenced");
+
+    if ((GHeader.version <= 3) && (objid > 255))
+        die("Invalid object id referenced");
+
+    uint8 *ptr = GStory + GHeader.objtab_addr;
+    ptr += 31 * sizeof (uint16);  // skip properties defaults table
+    ptr += 9 * (objid-1);  // find object in object table
+    return ptr;
+} // getObjectPtr
+
 static void opcode_test_attr(void)
 {
     const uint16fast objid = GOperands[0];
     const uint16fast attrid = GOperands[1];
-
-    FIXME("fail if attrid > some zmachine limit");
-    FIXME("fail if objid == 0");
+    uint8 *ptr = getObjectPtr(objid);
 
     if (GHeader.version <= 3)
     {
-        uint8 *ptr = GStory + GHeader.objtab_addr;
-        ptr += 31 * sizeof (uint16);  // skip properties defaults table
-        ptr += 9 * (objid-1);  // find object in object table
         ptr += (attrid / 8);
         doBranch((*ptr & (0x80 >> (attrid & 7))) ? 1 : 0);
     } // if
@@ -472,19 +482,69 @@ static void opcode_test_attr(void)
     } // else
 } // opcode_test_attr
 
+static uint8 *getObjectPtrParent(uint8 *objptr)
+{
+    if (GHeader.version <= 3)
+    {
+        objptr += 4;  // skip object attributes.
+        const uint16fast parent = *objptr;
+        return parent ? getObjectPtr(parent) : NULL;
+    }
+    else
+    {
+        die("write me");
+    } // else
+} // getGetObjectPtrParent
+
+static void opcode_insert_obj(void)
+{
+    const uint16fast objid = GOperands[0];
+    const uint16fast dstid = GOperands[1];
+
+    uint8 *objptr = getObjectPtr(objid);
+    uint8 *dstptr = getObjectPtr(dstid);
+    uint8 *parentptr = getObjectPtrParent(objptr);
+
+    if (GHeader.version <= 3)
+    {
+        // this child/sibling thing is messy. There's a lot of tapdancing to
+        //  move stuff around.
+
+        // Let's take the object out of its original tree first.
+        if (parentptr != NULL)  // if NULL, no need to remove it.
+        {   //p s c
+            uint8 *ptr = objptr + 6;  // 4 to skip attrs, 2 to skip to child.
+            if (*ptr != objid) // objid is _not_ direct child.
+            {
+                do  // ugh, have to look through sibling list...
+                {
+                    ptr = getObjectPtr(*ptr) + 5;  // get actual direct child's sibling field.
+                } while (*ptr != objid);
+            } // if
+            *ptr = *(objptr + 5);  // obj sibling takes obj's place.
+        } // if
+
+        // now insert in the right place.
+        *(objptr + 4) = (uint8) dstid;  // parent field: new destination
+        *(objptr + 5) = *(dstptr + 6);  // sibling field: new dest's old child.
+        *(dstptr + 6) = objid;  // dest's child field: object being moved.
+    } // if
+    else
+    {
+        die("write me");  // fields are different in ver4+.
+    } // else
+} // opcode_insert_obj
+
 static void opcode_put_prop(void)
 {
     const uint16fast objid = GOperands[0];
     const uint16fast propid = GOperands[1];
     const uint16fast value = GOperands[2];
 
-    FIXME("fail if objid == 0");
+    uint8 *ptr = getObjectPtr(objid);
 
     if (GHeader.version <= 3)
     {
-        uint8 *ptr = GStory + GHeader.objtab_addr;
-        ptr += 31 * sizeof (uint16);  // skip properties defaults table
-        ptr += 9 * (objid-1);  // find object in object table
         ptr += 7;  // skip to properties address field.
         const uint16fast addr = READUI16(ptr);
         ptr = GStory + addr;
@@ -845,7 +905,7 @@ static void initOpcodeTable(void)
     OPCODE_WRITEME(11, set_attr);
     OPCODE_WRITEME(12, clear_attr);
     OPCODE(13, store);
-    OPCODE_WRITEME(14, insert_obj);
+    OPCODE(14, insert_obj);
     OPCODE(15, loadw);
     OPCODE(16, loadb);
     OPCODE_WRITEME(17, get_prop);
