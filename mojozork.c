@@ -196,7 +196,7 @@ static uint8 *varAddress(const uint8fast var, const int writing)
 
     // else, global var
     FIXME("check for overflow, etc");
-    return (GStory + GHeader.globals_addr) + (var-0x10);
+    return (GStory + GHeader.globals_addr) + ((var-0x10) * sizeof (uint16));
 } // varAddress
 
 static void opcode_call(void)
