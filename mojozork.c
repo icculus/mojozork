@@ -582,9 +582,9 @@ static void opcode_put_prop(void)
         ptr += (*ptr * 2) + 1;  // skip object name to start of properties.
         while (1)
         {
-            const uint8 info = *(ptr++);
+            const uint8fast info = *(ptr++);
             const uint16fast num = (info & 0x1F);  // 5 bits for the prop id.
-            const uint32 size = ((info >> 5) & 0x7) + 1; // 3 bits for prop size.
+            const uint8fast size = ((info >> 5) & 0x7) + 1; // 3 bits for prop size.
             // these go in descending numeric order, and should fail
             //  the interpreter if missing.
             if (num < propid)
@@ -594,7 +594,9 @@ static void opcode_put_prop(void)
                 if (size == 1)
                     *ptr = (value & 0xFF);
                 else
-                    *((uint16 *) ptr) = value;
+                {
+                    WRITEUI16(ptr, value);
+                } // else
                 return;
             } // else if
 
@@ -606,6 +608,67 @@ static void opcode_put_prop(void)
         die("write me");
     } // else
 } // opcode_put_prop
+
+static uint16fast getDefaultObjectProperty(const uint16fast propid)
+{
+    if ( ((GHeader.version <= 3) && (propid > 31)) ||
+         ((GHeader.version >= 4) && (propid > 63)) )
+    {
+        FIXME("Should we die here?");
+        return 0;
+    } // if
+
+    const uint16 *values = (const uint16 *) (GStory + GHeader.objtab_addr);
+    return values[propid];
+} // getDefaultObjectProperty
+
+static void opcode_get_prop(void)
+{
+    uint8 *store = varAddress(*(GPC++), 1);
+    const uint16fast objid = GOperands[0];
+    const uint16fast propid = GOperands[1];
+    uint16fast result = 0;
+
+    uint8 *ptr = getObjectPtr(objid);
+
+    if (GHeader.version <= 3)
+    {
+        ptr += 7;  // skip to properties address field.
+        const uint16fast addr = READUI16(ptr);
+        ptr = GStory + addr;
+        ptr += (*ptr * 2) + 1;  // skip object name to start of properties.
+        while (1)
+        {
+            const uint8fast info = *(ptr++);
+            const uint16fast num = (info & 0x1F);  // 5 bits for the prop id.
+            const uint8fast size = ((info >> 5) & 0x7) + 1; // 3 bits for prop size.
+            // these go in descending numeric order
+            if (num < propid)  // missing for this object? Use the default.
+            {
+                result = getDefaultObjectProperty(propid);
+                break;
+            } // if
+            else if (num == propid)  // found it?
+            {
+                if (size == 1)
+                    result = *ptr;
+                else
+                {
+                    result = READUI16(ptr);
+                } // else
+                break;
+            } // else if
+
+            ptr += size;  // try the next property.
+        } // while
+    } // if
+    else
+    {
+        die("write me");
+    } // else
+
+    WRITEUI16(store, result);
+} // opcode_get_prop
 
 static void opcode_jin(void)
 {
@@ -986,7 +1049,7 @@ static void initOpcodeTable(void)
     OPCODE(14, insert_obj);
     OPCODE(15, loadw);
     OPCODE(16, loadb);
-    OPCODE_WRITEME(17, get_prop);
+    OPCODE(17, get_prop);
     OPCODE_WRITEME(18, get_prop_addr);
     OPCODE_WRITEME(19, get_next_prop);
     OPCODE(20, add);
