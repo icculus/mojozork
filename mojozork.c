@@ -750,6 +750,22 @@ static void opcode_print_char(void)
     print_zscii_char(GOperands[0]);
 } // opcode_print_char
 
+static void opcode_print_obj(void)
+{
+    uint8 *ptr = getObjectPtr(GOperands[0]);
+
+    if (GHeader.version <= 3)
+    {
+        ptr += 7;  // skip to properties field.
+        const uint16fast addr = READUI16(ptr);  // dereference to get to property table.
+        print_zscii(GStory + addr, 0);
+    } // if
+    else
+    {
+        die("write me");
+    } // else
+} // opcode_print_obj
+
 static void opcode_nop(void)
 {
     // that's all, folks.
@@ -972,7 +988,7 @@ static void initOpcodeTable(void)
     OPCODE_WRITEME(134, dec);
     OPCODE_WRITEME(135, print_addr);
     OPCODE_WRITEME(137, remove_obj);
-    OPCODE_WRITEME(138, print_obj);
+    OPCODE(138, print_obj);
     OPCODE(139, ret);
     OPCODE(140, jump);
     OPCODE_WRITEME(141, print_paddr);
