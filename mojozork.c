@@ -198,27 +198,6 @@ static uint8 *varAddress(const uint8fast var, const int writing)
     return (GStory + GHeader.globals_addr) + (var-0x10);
 } // varAddress
 
-static void doBranch(int truth)
-{
-    const uint8 branch = *(GPC++);
-    const int farjump = (branch & (1<<6)) != 0;
-    const uint8 byte2 = farjump ? 0 : *(GPC++);
-    const int onTruth = (branch & (1<<7)) ? 1 : 0;
-    if (truth == onTruth)  // take the branch?
-    {
-        sint16fast offset = (sint16fast) (branch & 0x3F);
-        if (farjump)
-            offset = (byte2 << 8) | ((uint16fast) offset);
-
-        if (offset == 0)  // return false from current routine.
-            die("write me");
-        else if (offset == 1)  // return true from current routine.
-            die("write me");
-        else
-            GPC = (GPC + offset) - 2;  // branch.
-    } // if
-} // doBranch
-
 static void opcode_call(void)
 {
     uint8fast args = GOperandCount;
@@ -284,7 +263,7 @@ static void doReturn(const uint16fast val)
 {
     FIXME("newer versions start in a real routine, but still aren't allowed to return from it.");
     if (GBP == 0)
-        die("Stack underflow in ret instruction");
+        die("Stack underflow in return operation");
 
     dbg("popping stack for return\n");
     dbg("returning: initial pc=%X, bp=%u, sp=%u\n", (unsigned int) (GPC-GStory), (unsigned int) GBP, (unsigned int) (GSP-GStack));
@@ -347,6 +326,27 @@ static void opcode_sub(void)
     const sint16 result = ((sint16) GOperands[0]) - ((sint16) GOperands[1]);
     WRITEUI16(store, result);
 } // opcode_sub
+
+static void doBranch(int truth)
+{
+    const uint8 branch = *(GPC++);
+    const int farjump = (branch & (1<<6)) != 0;
+    const uint8 byte2 = farjump ? 0 : *(GPC++);
+    const int onTruth = (branch & (1<<7)) ? 1 : 0;
+    if (truth == onTruth)  // take the branch?
+    {
+        sint16fast offset = (sint16fast) (branch & 0x3F);
+        if (farjump)
+            offset = (byte2 << 8) | ((uint16fast) offset);
+
+        if (offset == 0)  // return false from current routine.
+            doReturn(0);
+        else if (offset == 1)  // return true from current routine.
+            doReturn(1);
+        else
+            GPC = (GPC + offset) - 2;  // branch.
+    } // if
+} // doBranch
 
 static void opcode_je(void)
 {
