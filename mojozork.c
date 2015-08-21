@@ -320,6 +320,20 @@ static void opcode_rfalse(void)
     doReturn(0);
 } // opcode_rfalse
 
+static void opcode_push(void)
+{
+    uint8 *store = varAddress(0, 1);   // top of stack.
+    WRITEUI16(store, GOperands[0]);
+} // opcode_push
+
+static void opcode_pull(void)
+{
+    uint8 *ptr = varAddress(0, 0);   // top of stack.
+    const uint16fast val = READUI16(ptr);
+    uint8 *store = varAddress(GOperands[0], 1);
+    WRITEUI16(store, val);
+} // opcode_pull
+
 static void opcode_add(void)
 {
     uint8 *store = varAddress(*(GPC++), 1);
@@ -957,8 +971,8 @@ static void initOpcodeTable(void)
     OPCODE(229, print_char);
     OPCODE(230, print_num);
     OPCODE_WRITEME(231, random);
-    OPCODE_WRITEME(232, push);
-    OPCODE_WRITEME(233, pull);
+    OPCODE(232, push);
+    OPCODE(233, pull);
 
     if (GHeader.version < 3)  // most early Infocom games are version 3.
         return;  // we're done.
