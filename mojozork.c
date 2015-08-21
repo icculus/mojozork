@@ -775,7 +775,7 @@ static void opcode_print_obj(void)
     {
         ptr += 7;  // skip to properties field.
         const uint16fast addr = READUI16(ptr);  // dereference to get to property table.
-        print_zscii(GStory + addr, 0);
+        print_zscii(GStory + addr + 1, 0);
     } // if
     else
     {
