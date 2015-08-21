@@ -1235,7 +1235,9 @@ static void runInstruction(void)
             parseOperand(optype, GOperands);  // 1OP or 0OP
         } // else if
 
-        //else if (opcode <= 191)  // 0OP
+        else if (opcode <= 191)  // 0OP
+            GOperandCount = 0;
+
         else if (opcode > 191)  // VAR
         {
             const int takes8 = ((opcode == 236) || (opcode == 250));  // call_vs2 and call_vn2 take up to EIGHT arguments!
