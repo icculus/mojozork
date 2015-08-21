@@ -607,6 +607,20 @@ static void opcode_put_prop(void)
     } // else
 } // opcode_put_prop
 
+static void opcode_jin(void)
+{
+    const uint16fast objid = GOperands[0];
+    const uint16fast parentid = GOperands[1];
+    const uint8 *objptr = getObjectPtr(objid);
+
+    if (GHeader.version <= 3)
+        doBranch(((uint16fast) objptr[4]) == parentid);
+    else
+    {
+        die("write me");  // fields are different in ver4+.
+    } // else
+} // opcode_jin
+
 static void opcode_new_line(void)
 {
     putchar('\n');
@@ -928,7 +942,7 @@ static void initOpcodeTable(void)
     OPCODE_WRITEME(3, jg);
     OPCODE_WRITEME(4, dec_chk);
     OPCODE(5, inc_chk);
-    OPCODE_WRITEME(6, jin);
+    OPCODE(6, jin);
     OPCODE_WRITEME(7, test);
     OPCODE(8, or);
     OPCODE(9, and);
