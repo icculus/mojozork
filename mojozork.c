@@ -951,6 +951,8 @@ static uintptr print_zscii(const uint8 *_str, const int abbr)
     uint16fast code = 0;
     uint8fast alphabet = 0;
     uint8fast useAbbrTable = 0;
+    uint8fast zscii_collector = 0;
+    uint16fast zscii_code = 0;
 
     do
     {
@@ -964,7 +966,23 @@ static uintptr print_zscii(const uint8 *_str, const int abbr)
             char printVal = 0;
             const uint8fast ch = ((code >> i) & 0x1F);
 
-            if (useAbbrTable)
+            if (zscii_collector)
+            {
+                if (zscii_collector == 2)
+                    zscii_code |= ((uint16fast) ch) << 5;
+                else
+                    zscii_code |= ((uint16fast) ch);
+
+                zscii_collector--;
+                if (!zscii_collector)
+                {
+                    print_zscii_char(zscii_code);
+                    alphabet = useAbbrTable = zscii_code = 0;
+                } // if
+                continue;
+            } // if
+
+            else if (useAbbrTable)
             {
                 if (abbr)
                     die("Abbreviation strings can't use abbreviations");
@@ -1012,8 +1030,9 @@ static uintptr print_zscii(const uint8 *_str, const int abbr)
 
                 default:
                     if ((ch == 6) && (alphabet == 2))
-                        die("write me"); // next two chars make up a 10 bit ZSCII character.
-                    printVal = GAlphabetTable[(alphabet*26) + (ch-6)]; break;
+                        zscii_collector = 2;
+                    else
+                        printVal = GAlphabetTable[(alphabet*26) + (ch-6)]; break;
                     break;
             } // switch
 
