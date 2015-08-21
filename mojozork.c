@@ -16,11 +16,14 @@ static inline void dbg(const char *fmt, ...)
 #if 1
     va_list ap;
     va_start(ap, fmt);
-    vprintf(fmt, ap);
+    vfprintf(stderr, fmt, ap);
     va_end(ap);
 #endif
 } // dbg
 
+#if 0
+#define FIXME(what)
+#else
 #define FIXME(what) { \
     static int seen = 0; \
     if (!seen) { \
@@ -28,6 +31,7 @@ static inline void dbg(const char *fmt, ...)
         dbg("FIXME: %s\n", what); \
     } \
 }
+#endif
 
 // the "_t" drives me nuts.  :/
 typedef uint8_t uint8;
