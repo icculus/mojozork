@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <stdarg.h>
 #include <stdint.h>
+#include <time.h>
 
 #define NORETURN __attribute__((noreturn))
 
@@ -145,7 +146,7 @@ static void loadStory(const char *fname)
 
 typedef void (*OpcodeFn)(void);
 
-// The Z-Machine can't directly address 32-bits, but this needs to expands past 16 bits when we multiply by 2, 4, or 8, etc.
+// The Z-Machine can't directly address 32-bits, but this needs to expand past 16 bits when we multiply by 2, 4, or 8, etc.
 static uint8 *unpackAddress(const uint32fast addr)
 {
     if (GHeader.version <= 3)
@@ -299,6 +300,13 @@ static void opcode_rfalse(void)
     doReturn(0);
 } // opcode_rfalse
 
+static void opcode_ret_popped(void)
+{
+    uint8 *ptr = varAddress(0, 0);   // top of stack.
+    const uint16fast result = READUI16(ptr);
+    doReturn(result);
+} // opcode_ret_popped
+
 static void opcode_push(void)
 {
     uint8 *store = varAddress(0, 1);   // top of stack.
@@ -312,6 +320,11 @@ static void opcode_pull(void)
     uint8 *store = varAddress(GOperands[0], 1);
     WRITEUI16(store, val);
 } // opcode_pull
+
+static void opcode_pop(void)
+{
+    varAddress(0, 0);   // this causes a pop.
+} // opcode_pop
 
 static void opcode_add(void)
 {
@@ -371,8 +384,18 @@ static void opcode_jz(void)
 
 static void opcode_jl(void)
 {
-    doBranch(((sint16fast) GOperands[0]) < ((sint16fast) GOperands[1]));
+    doBranch((((sint16fast) GOperands[0]) < ((sint16fast) GOperands[1])) ? 1 : 0);
 } // opcode_jl
+
+static void opcode_jg(void)
+{
+    doBranch((((sint16fast) GOperands[0]) > ((sint16fast) GOperands[1])) ? 1 : 0);
+} // opcode_jg
+
+static void opcode_test(void)
+{
+    doBranch((GOperands[0] & GOperands[1]) == GOperands[1]);
+} // opcode_test
 
 static void opcode_jump(void)
 {
@@ -409,26 +432,67 @@ static void opcode_mul(void)
 static void opcode_or(void)
 {
     uint8 *store = varAddress(*(GPC++), 1);
-    const uint16 result = (GOperands[0] | GOperands[1]);
+    const uint16fast result = (GOperands[0] | GOperands[1]);
     WRITEUI16(store, result);
 } // opcode_or
 
 static void opcode_and(void)
 {
     uint8 *store = varAddress(*(GPC++), 1);
-    const uint16 result = (GOperands[0] & GOperands[1]);
+    const uint16fast result = (GOperands[0] & GOperands[1]);
     WRITEUI16(store, result);
 } // opcode_and
+
+static void opcode_not(void)
+{
+    uint8 *store = varAddress(*(GPC++), 1);
+    const uint16fast result = ~GOperands[0];
+    WRITEUI16(store, result);
+} // opcode_not
 
 static void opcode_inc_chk(void)
 {
     uint8 *store = varAddress((uint8fast) GOperands[0], 1);
-    uint16 val = READUI16(store);
+    sint16 val = READUI16(store);
     store -= sizeof (uint16);
     val++;
-    WRITEUI16(store, val);
-    doBranch((val > GOperands[1]) ? 1 : 0);
+    WRITEUI16(store, (uint16) val);
+    doBranch( (((sint16fast) val) > ((sint16fast) GOperands[1])) ? 1 : 0 );
 } // opcode_inc_chk
+
+static void opcode_inc(void)
+{
+    uint8 *store = varAddress((uint8fast) GOperands[0], 1);
+    sint16 val = (sint16) READUI16(store);
+    store -= sizeof (uint16);
+    val++;
+    WRITEUI16(store, (uint16) val);
+} // opcode_inc
+
+static void opcode_dec_chk(void)
+{
+    uint8 *store = varAddress((uint8fast) GOperands[0], 1);
+    sint16 val = (sint16) READUI16(store);
+    store -= sizeof (uint16);
+    val--;
+    WRITEUI16(store, (uint16) val);
+    doBranch( (((sint16fast) val) < ((sint16fast) GOperands[1])) ? 1 : 0 );
+} // opcode_dec_chk
+
+static void opcode_dec(void)
+{
+    uint8 *store = varAddress((uint8fast) GOperands[0], 1);
+    sint16 val = (sint16) READUI16(store);
+    store -= sizeof (uint16);
+    val--;
+    WRITEUI16(store, (uint16) val);
+} // opcode_dec
+
+static void opcode_load(void)
+{
+    uint8 *store = varAddress(*(GPC++), 1);
+    WRITEUI16(store, GOperands[0]);
+} // opcode_load
 
 static void opcode_loadw(void)
 {
@@ -456,6 +520,15 @@ static void opcode_storew(void)
     const uint16 src = GOperands[2];
     WRITEUI16(dst, src);
 } // opcode_storew
+
+static void opcode_storeb(void)
+{
+    FIXME("can only write to dynamic memory.");
+    FIXME("how does overflow work here? Do these wrap around?");
+    uint8 *dst = (GStory + GOperands[0] + GOperands[1]);
+    const uint8 src = (uint8) GOperands[2];
+    *dst = src;
+} // opcode_storeb
 
 static void opcode_store(void)
 {
@@ -513,6 +586,23 @@ static void opcode_set_attr(void)
     } // else
 } // opcode_set_attr
 
+static void opcode_clear_attr(void)
+{
+    const uint16fast objid = GOperands[0];
+    const uint16fast attrid = GOperands[1];
+    uint8 *ptr = getObjectPtr(objid);
+
+    if (GHeader.version <= 3)
+    {
+        ptr += (attrid / 8);
+        *ptr &= ~(0x80 >> (attrid & 7));
+    } // if
+    else
+    {
+        die("write me");
+    } // else
+} // opcode_clear_attr
+
 static uint8 *getObjectPtrParent(uint8 *objptr)
 {
     if (GHeader.version <= 3)
@@ -565,6 +655,42 @@ static void opcode_insert_obj(void)
         die("write me");  // fields are different in ver4+.
     } // else
 } // opcode_insert_obj
+
+static void opcode_remove_obj(void)
+{
+    const uint16fast objid = GOperands[0];
+
+    uint8 *objptr = getObjectPtr(objid);
+    uint8 *parentptr = getObjectPtrParent(objptr);
+
+    if (GHeader.version <= 3)
+    {
+        // this child/sibling thing is messy. There's a lot of tapdancing to
+        //  move stuff around.
+
+        // Let's take the object out of its original tree.
+        if (parentptr != NULL)  // if NULL, no need to remove it.
+        {
+            uint8 *ptr = objptr + 6;  // 4 to skip attrs, 2 to skip to child.
+            if (*ptr != objid) // objid is _not_ direct child.
+            {
+                do  // ugh, have to look through sibling list...
+                {
+                    ptr = getObjectPtr(*ptr) + 5;  // get actual direct child's sibling field.
+                } while (*ptr != objid);
+            } // if
+            *ptr = *(objptr + 5);  // obj sibling takes obj's place.
+        } // if
+
+        // now clear out object's relationships...
+        *(objptr + 4) = 0;  // parent field: zero.
+        *(objptr + 5) = 0;  // sibling field: zero.
+    } // if
+    else
+    {
+        die("write me");  // fields are different in ver4+.
+    } // else
+} // opcode_remove_obj
 
 static void opcode_put_prop(void)
 {
@@ -670,6 +796,115 @@ static void opcode_get_prop(void)
     WRITEUI16(store, result);
 } // opcode_get_prop
 
+static void opcode_get_prop_addr(void)
+{
+    FIXME("So much code dupe");
+    uint8 *store = varAddress(*(GPC++), 1);
+    const uint16fast objid = GOperands[0];
+    const uint16fast propid = GOperands[1];
+    uint16fast result = 0;
+
+    uint8 *ptr = getObjectPtr(objid);
+
+    if (GHeader.version <= 3)
+    {
+        ptr += 7;  // skip to properties address field.
+        const uint16fast addr = READUI16(ptr);
+        ptr = GStory + addr;
+        ptr += (*ptr * 2) + 1;  // skip object name to start of properties.
+        while (1)
+        {
+            const uint8fast info = *(ptr++);
+            const uint16fast num = (info & 0x1F);  // 5 bits for the prop id.
+            const uint8fast size = ((info >> 5) & 0x7) + 1; // 3 bits for prop size.
+            // these go in descending numeric order
+            if (num < propid)  // missing for this object?
+                break;
+            else if (num == propid)  // found it?
+            {
+                result = (uint16fast) (ptr - GStory);
+                break;
+            } // else if
+
+            ptr += size;  // try the next property.
+        } // while
+    } // if
+    else
+    {
+        die("write me");
+    } // else
+
+    WRITEUI16(store, result);
+} // opcode_get_prop_addr
+
+static void opcode_get_prop_len(void)
+{
+    uint8 *store = varAddress(*(GPC++), 1);
+    const uint8 *ptr = GStory + GOperands[0];
+    uint16fast result = 0;
+
+    if (GOperands[0] == 0)
+        result = 0;  // this must return 0, to avoid a bug in older Infocom games.
+    else if (GHeader.version <= 3)
+    {
+        ptr--;  // go back to size field.
+        const uint8fast info = *ptr;
+        result = ((info >> 5) & 0x7) + 1; // 3 bits for prop size.
+    } // if
+    else
+    {
+        die("write me");
+    } // else
+
+    WRITEUI16(store, result);
+} // opcode_get_prop_size
+
+static void opcode_get_next_prop(void)
+{
+    FIXME("So much code dupe");
+    uint8 *store = varAddress(*(GPC++), 1);
+    const uint16fast objid = GOperands[0];
+    const uint16fast propid = GOperands[1];
+    int thisone = (propid == 0);  // zero == "first property in the list"
+    uint16fast result = 0;
+
+    uint8 *ptr = getObjectPtr(objid);
+
+    if (GHeader.version <= 3)
+    {
+        ptr += 7;  // skip to properties address field.
+        const uint16fast addr = READUI16(ptr);
+        ptr = GStory + addr;
+        ptr += (*ptr * 2) + 1;  // skip object name to start of properties.
+        while (1)
+        {
+            const uint8fast info = *(ptr++);
+            const uint16fast num = (info & 0x1F);  // 5 bits for the prop id.
+            const uint8fast size = ((info >> 5) & 0x7) + 1; // 3 bits for prop size.
+            // these go in descending numeric order
+            if (thisone)
+            {
+                result = num;
+                break;
+            } // if
+
+            else if (num < propid)  // missing for this object?
+                die("get_next_prop on missing propery");
+
+            else if (num == propid)  // found it?
+                thisone = 1;
+
+            ptr += size;  // try the next property.
+        } // while
+    } // if
+    else
+    {
+        die("write me");
+    } // else
+
+    WRITEUI16(store, result);
+} // opcode_get_next_prop
+
 static void opcode_jin(void)
 {
     const uint16fast objid = GOperands[0];
@@ -677,7 +912,7 @@ static void opcode_jin(void)
     const uint8 *objptr = getObjectPtr(objid);
 
     if (GHeader.version <= 3)
-        doBranch(((uint16fast) objptr[4]) == parentid);
+        doBranch((((uint16fast) objptr[4]) == parentid) ? 1 : 0);
     else
     {
         die("write me");  // fields are different in ver4+.
@@ -708,7 +943,7 @@ static void opcode_get_sibling(void)
     uint8 *store = varAddress(*(GPC++), 1);
     const uint16fast result = getObjectRelationship(GOperands[0], 5);
     WRITEUI16(store, result);
-    doBranch(result != 0);
+    doBranch((result != 0) ? 1: 0);
 } // opcode_get_sibling
 
 static void opcode_get_child(void)
@@ -716,7 +951,7 @@ static void opcode_get_child(void)
     uint8 *store = varAddress(*(GPC++), 1);
     const uint16fast result = getObjectRelationship(GOperands[0], 6);
     WRITEUI16(store, result);
-    doBranch(result != 0);
+    doBranch((result != 0) ? 1: 0);
 } // opcode_get_child
 
 static void opcode_new_line(void)
@@ -848,6 +1083,13 @@ static void opcode_print_char(void)
     print_zscii_char(GOperands[0]);
 } // opcode_print_char
 
+static void opcode_print_ret(void)
+{
+    GPC += print_zscii(GPC, 0);
+    putchar('\n');
+    fflush(stdout);
+} // opcode_print_ret
+
 static void opcode_print_obj(void)
 {
     uint8 *ptr = getObjectPtr(GOperands[0]);
@@ -863,6 +1105,42 @@ static void opcode_print_obj(void)
         die("write me");
     } // else
 } // opcode_print_obj
+
+static void opcode_print_addr(void)
+{
+    print_zscii(GStory + GOperands[0], 0);
+} // opcode_print_addr
+
+static void opcode_print_paddr(void)
+{
+    print_zscii(unpackAddress(GOperands[0]), 0);
+} // opcode_print_paddr
+
+static void opcode_random(void)
+{
+    uint8 *store = varAddress(*(GPC++), 1);
+    const sint16fast range = (sint16fast) GOperands[0];
+    uint16fast result = 0;
+
+    if (range == 0)  // reseed in "most random way"
+        srandom((unsigned long) time(NULL));
+    else if (range < 0)  // reseed with specific value
+        srandom(-range);
+    else
+    {
+        FIXME("this is sucky");
+        long r = random();
+        r = (r >> (sizeof (r) / 2) * 8) ^ r;
+        result = (uint16fast) ((((float) (r & 0xFFFF)) / 65535.0f) * ((float) range));
+    } // else
+
+    WRITEUI16(store, result);
+} // opcode_random
+
+static void opcode_quit(void)
+{
+    GQuit = 1;
+} // opcode_quit
 
 static void opcode_nop(void)
 {
@@ -1053,23 +1331,23 @@ static void initOpcodeTable(void)
     // 2-operand instructions...
     OPCODE(1, je);
     OPCODE(2, jl);
-    OPCODE_WRITEME(3, jg);
-    OPCODE_WRITEME(4, dec_chk);
+    OPCODE(3, jg);
+    OPCODE(4, dec_chk);
     OPCODE(5, inc_chk);
     OPCODE(6, jin);
-    OPCODE_WRITEME(7, test);
+    OPCODE(7, test);
     OPCODE(8, or);
     OPCODE(9, and);
     OPCODE(10, test_attr);
     OPCODE(11, set_attr);
-    OPCODE_WRITEME(12, clear_attr);
+    OPCODE(12, clear_attr);
     OPCODE(13, store);
     OPCODE(14, insert_obj);
     OPCODE(15, loadw);
     OPCODE(16, loadb);
     OPCODE(17, get_prop);
-    OPCODE_WRITEME(18, get_prop_addr);
-    OPCODE_WRITEME(19, get_next_prop);
+    OPCODE(18, get_prop_addr);
+    OPCODE(19, get_next_prop);
     OPCODE(20, add);
     OPCODE(21, sub);
     OPCODE(22, mul);
@@ -1081,41 +1359,41 @@ static void initOpcodeTable(void)
     OPCODE(129, get_sibling);
     OPCODE(130, get_child);
     OPCODE(131, get_parent);
-    OPCODE_WRITEME(132, get_prop_len);
-    OPCODE_WRITEME(133, inc);
-    OPCODE_WRITEME(134, dec);
-    OPCODE_WRITEME(135, print_addr);
-    OPCODE_WRITEME(137, remove_obj);
+    OPCODE(132, get_prop_len);
+    OPCODE(133, inc);
+    OPCODE(134, dec);
+    OPCODE(135, print_addr);
+    OPCODE(137, remove_obj);
     OPCODE(138, print_obj);
     OPCODE(139, ret);
     OPCODE(140, jump);
-    OPCODE_WRITEME(141, print_paddr);
-    OPCODE_WRITEME(142, load);
-    OPCODE_WRITEME(143, not);
+    OPCODE(141, print_paddr);
+    OPCODE(142, load);
+    OPCODE(143, not);
 
     // 0-operand instructions...
     OPCODE(176, rtrue);
     OPCODE(177, rfalse);
     OPCODE(178, print);
-    OPCODE_WRITEME(179, print_ret);
+    OPCODE(179, print_ret);
     OPCODE(180, nop);
     OPCODE_WRITEME(181, save);
     OPCODE_WRITEME(182, restore);
     OPCODE_WRITEME(183, restart);
-    OPCODE_WRITEME(184, ret_popped);
-    OPCODE_WRITEME(185, pop);
-    OPCODE_WRITEME(186, quit);
+    OPCODE(184, ret_popped);
+    OPCODE(185, pop);
+    OPCODE(186, quit);
     OPCODE(187, new_line);
 
     // variable operand instructions...
     OPCODE(224, call);
     OPCODE(225, storew);
-    OPCODE_WRITEME(226, storeb);
+    OPCODE(226, storeb);
     OPCODE(227, put_prop);
-    OPCODE_WRITEME(228, sread);
+    OPCODE_WRITEME(228, read);
     OPCODE(229, print_char);
     OPCODE(230, print_num);
-    OPCODE_WRITEME(231, random);
+    OPCODE(231, random);
     OPCODE(232, push);
     OPCODE(233, pull);
 
@@ -1176,7 +1454,7 @@ static void initOpcodeTable(void)
     // this is the "save" and "restore" opcodes in ver1-4; illegal in ver5+.
     //  in ver5+, they use extended opcode 0 and 1 for these.
     opcodes[180].name = opcodes[181].name = NULL;
-    opcodes[180].name = opcodes[181].name = NULL;
+    opcodes[180].fn = opcodes[181].fn = NULL;
 
     // We special-case this later, so no function pointer supplied.
     opcodes[190].name = "extended";
@@ -1270,6 +1548,8 @@ int main(int argc, char **argv)
 
     if (GHeader.version != 3)
         die("FIXME: only version 3 is supported right now, this is %d", (int) GHeader.version);
+
+    srandom((unsigned long) time(NULL));
 
     initAlphabetTable();
     initOpcodeTable();
