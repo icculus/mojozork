@@ -684,22 +684,40 @@ static void opcode_jin(void)
     } // else
 } // opcode_jin
 
-static void opcode_get_parent(void)
+static uint16fast getObjectRelationship(const uint16fast objid, const uint8fast relationship)
 {
-    uint8 *store = varAddress(*(GPC++), 1);
-    const uint16fast objid = GOperands[0];
     const uint8 *objptr = getObjectPtr(objid);
 
     if (GHeader.version <= 3)
-    {
-        const uint16fast result = objptr[4];
-        WRITEUI16(store, result);
-    } // if
+        return objptr[relationship];
     else
     {
         die("write me");  // fields are different in ver4+.
     } // else
+} // getObjectRelationship
+
+static void opcode_get_parent(void)
+{
+    uint8 *store = varAddress(*(GPC++), 1);
+    const uint16fast result = getObjectRelationship(GOperands[0], 4);
+    WRITEUI16(store, result);
 } // opcode_get_parent
+
+static void opcode_get_sibling(void)
+{
+    uint8 *store = varAddress(*(GPC++), 1);
+    const uint16fast result = getObjectRelationship(GOperands[0], 5);
+    WRITEUI16(store, result);
+    doBranch(result != 0);
+} // opcode_get_sibling
+
+static void opcode_get_child(void)
+{
+    uint8 *store = varAddress(*(GPC++), 1);
+    const uint16fast result = getObjectRelationship(GOperands[0], 6);
+    WRITEUI16(store, result);
+    doBranch(result != 0);
+} // opcode_get_child
 
 static void opcode_new_line(void)
 {
@@ -1060,8 +1078,8 @@ static void initOpcodeTable(void)
 
     // 1-operand instructions...
     OPCODE(128, jz);
-    OPCODE_WRITEME(129, get_sibling);
-    OPCODE_WRITEME(130, get_child);
+    OPCODE(129, get_sibling);
+    OPCODE(130, get_child);
     OPCODE(131, get_parent);
     OPCODE_WRITEME(132, get_prop_len);
     OPCODE_WRITEME(133, inc);
