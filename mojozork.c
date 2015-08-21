@@ -105,48 +105,6 @@ static void die(const char *fmt, ...)
     _exit(1);
 } // die
 
-static void loadStory(const char *fname)
-{
-    FILE *io;
-    off_t len;
-
-    if (!fname)
-        die("USAGE: mojozork <story_file>");
-    else if ((io = fopen(fname, "rb")) == NULL)
-        die("Failed to open '%s'", fname);
-    else if ((fseeko(io, 0, SEEK_END) == -1) || ((len = ftello(io)) == -1))
-        die("Failed to determine size of '%s'", fname);
-    else if ((GStory = malloc(len)) == NULL)
-        die("Out of memory");
-    else if ((fseeko(io, 0, SEEK_SET) == -1) || (fread(GStory, len, 1, io) != 1))
-        die("Failed to read '%s'", fname);
-
-    memset(&GHeader, '\0', sizeof (GHeader));
-    const uint8 *ptr = GStory;
-
-    GHeader.version = READUI8(ptr);
-    GHeader.flags1 = READUI8(ptr);
-    GHeader.release = READUI16(ptr);
-    GHeader.himem_addr = READUI16(ptr);
-    GHeader.pc_start = READUI16(ptr);
-    GHeader.dict_addr = READUI16(ptr);
-    GHeader.objtab_addr = READUI16(ptr);
-    GHeader.globals_addr = READUI16(ptr);
-    GHeader.staticmem_addr = READUI16(ptr);
-    GHeader.flags2 = READUI16(ptr);
-    GHeader.serial_code[0] = READUI8(ptr);
-    GHeader.serial_code[1] = READUI8(ptr);
-    GHeader.serial_code[2] = READUI8(ptr);
-    GHeader.serial_code[3] = READUI8(ptr);
-    GHeader.serial_code[4] = READUI8(ptr);
-    GHeader.serial_code[5] = READUI8(ptr);
-    GHeader.abbrtab_addr = READUI16(ptr);
-    GHeader.story_len = READUI16(ptr);
-    GHeader.story_checksum = READUI16(ptr);
-
-    fclose(io);
-    GStoryLen = (uintptr) len;
-} // loadStory
 
 typedef void (*OpcodeFn)(void);
 
@@ -1529,6 +1487,52 @@ static void finalizeOpcodeTable(void)
     for (i = 192; i <= 223; i++)  // 2OP opcodes repeating with VAR operand forms.
         GOpcodes[i] = GOpcodes[i % 32];
 } // finalizeOpcodeTable
+
+
+static void loadStory(const char *fname)
+{
+    FILE *io;
+    off_t len;
+
+    if (!fname)
+        die("USAGE: mojozork <story_file>");
+    else if ((io = fopen(fname, "rb")) == NULL)
+        die("Failed to open '%s'", fname);
+    else if ((fseeko(io, 0, SEEK_END) == -1) || ((len = ftello(io)) == -1))
+        die("Failed to determine size of '%s'", fname);
+    else if ((GStory = malloc(len)) == NULL)
+        die("Out of memory");
+    else if ((fseeko(io, 0, SEEK_SET) == -1) || (fread(GStory, len, 1, io) != 1))
+        die("Failed to read '%s'", fname);
+
+    memset(&GHeader, '\0', sizeof (GHeader));
+    const uint8 *ptr = GStory;
+
+    GStory[1] |= 0x8;  // report that we don't (currently) support a status bar.
+    
+    GHeader.version = READUI8(ptr);
+    GHeader.flags1 = READUI8(ptr);
+    GHeader.release = READUI16(ptr);
+    GHeader.himem_addr = READUI16(ptr);
+    GHeader.pc_start = READUI16(ptr);
+    GHeader.dict_addr = READUI16(ptr);
+    GHeader.objtab_addr = READUI16(ptr);
+    GHeader.globals_addr = READUI16(ptr);
+    GHeader.staticmem_addr = READUI16(ptr);
+    GHeader.flags2 = READUI16(ptr);
+    GHeader.serial_code[0] = READUI8(ptr);
+    GHeader.serial_code[1] = READUI8(ptr);
+    GHeader.serial_code[2] = READUI8(ptr);
+    GHeader.serial_code[3] = READUI8(ptr);
+    GHeader.serial_code[4] = READUI8(ptr);
+    GHeader.serial_code[5] = READUI8(ptr);
+    GHeader.abbrtab_addr = READUI16(ptr);
+    GHeader.story_len = READUI16(ptr);
+    GHeader.story_checksum = READUI16(ptr);
+
+    fclose(io);
+    GStoryLen = (uintptr) len;
+} // loadStory
 
 
 int main(int argc, char **argv)
