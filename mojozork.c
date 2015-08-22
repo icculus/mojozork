@@ -707,8 +707,10 @@ static uint16fast getDefaultObjectProperty(const uint16fast propid)
         return 0;
     } // if
 
-    const uint16 *values = (const uint16 *) (GStory + GHeader.objtab_addr);
-    return values[propid];
+    const uint8 *values = (GStory + GHeader.objtab_addr);
+    values += (propid-1) * sizeof (uint16);
+    const uint16fast result = READUI16(values);
+    return result;
 } // getDefaultObjectProperty
 
 static void opcode_get_prop(void)
