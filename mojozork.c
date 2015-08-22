@@ -470,8 +470,9 @@ static void opcode_loadb(void)
     uint8 *store = varAddress(*(GPC++), 1);
     FIXME("can only read from dynamic or static memory (not highmem).");
     FIXME("how does overflow work here? Do these wrap around?");
-    uint8 *src = GStory + (GOperands[0] + (GOperands[1]));
-    *store = *src;  // copy from 1 byte: no byteswap.
+    const uint8 *src = GStory + (GOperands[0] + (GOperands[1]));
+    const uint16fast value = *src;  // expand out to 16-bit before storing.
+    WRITEUI16(store, value);
 } // opcode_loadb
 
 static void opcode_storew(void)
