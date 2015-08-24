@@ -1078,6 +1078,7 @@ static void opcode_print_ret(void)
     GPC += print_zscii(GPC, 0);
     putchar('\n');
     fflush(stdout);
+    doReturn(1);
 } // opcode_print_ret
 
 static void opcode_print_obj(void)
