@@ -305,14 +305,20 @@ static void opcode_sub(void)
 static void doBranch(int truth)
 {
     const uint8 branch = *(GPC++);
-    const int farjump = (branch & (1<<6)) != 0;
-    const uint8 byte2 = farjump ? 0 : *(GPC++);
+    const int farjump = (branch & (1<<6)) == 0;
     const int onTruth = (branch & (1<<7)) ? 1 : 0;
+
+    const uint8 byte2 = farjump ? *(GPC++) : 0;
+
     if (truth == onTruth)  // take the branch?
     {
         sint16fast offset = (sint16fast) (branch & 0x3F);
         if (farjump)
-            offset = (byte2 << 8) | ((uint16fast) offset);
+        {
+            if (offset & (1 << 5))
+                offset |= 0xC0;   // extend out sign bit.
+            offset = (offset << 8) | ((sint16fast) byte2);
+        } // else
 
         if (offset == 0)  // return false from current routine.
             doReturn(0);
