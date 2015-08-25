@@ -1371,6 +1371,49 @@ static void opcode_restart(void)
     loadStory(GStoryFname);
 } // opcode_restart
 
+static void opcode_save(void)
+{
+    FIXME("this should write Quetzal format; this is temporary.");
+    const uint32 addr = (uint32) (GPC-GStory);
+    const uint32 sp = (uint32) (GSP-GStack);
+    FILE *io = fopen("save.dat", "wb");
+    int okay = 1;
+    okay &= io != NULL;
+    okay &= fwrite(GStory, GHeader.staticmem_addr, 1, io) == 1;
+    okay &= fwrite(&addr, sizeof (addr), 1, io) == 1;
+    okay &= fwrite(&sp, sizeof (sp), 1, io) == 1;
+    okay &= fwrite(GStack, sizeof (GStack), 1, io) == 1;
+    okay &= fwrite(&GBP, sizeof (GBP), 1, io) == 1;
+    if (io)
+        fclose(io);
+    doBranch(okay ? 1 : 0);
+} // opcode_save
+
+static void opcode_restore(void)
+{
+    FIXME("this should read Quetzal format; this is temporary.");
+    FILE *io = fopen("save.dat", "rb");
+    int okay = 1;
+    uint32 x = 0;
+
+    okay &= io != NULL;
+    okay &= fread(GStory, GHeader.staticmem_addr, 1, io) == 1;
+    okay &= fread(&x, sizeof (x), 1, io) == 1;
+    GLogicalPC = x;
+    GPC = GStory + x;
+    okay &= fread(&x, sizeof (x), 1, io) == 1;
+    GSP = GStack + x;
+    okay &= fread(GStack, sizeof (GStack), 1, io) == 1;
+    okay &= fread(&GBP, sizeof (GBP), 1, io) == 1;
+    if (io)
+        fclose(io);
+
+    if (!okay)
+        die("Failed to restore.");
+
+    doBranch(okay ? 1 : 0);
+} // opcode_restore
+
 static void opcode_quit(void)
 {
     GQuit = 1;
@@ -1613,8 +1656,8 @@ static void initOpcodeTable(void)
     OPCODE(178, print);
     OPCODE(179, print_ret);
     OPCODE(180, nop);
-    OPCODE_WRITEME(181, save);
-    OPCODE_WRITEME(182, restore);
+    OPCODE(181, save);
+    OPCODE(182, restore);
     OPCODE(183, restart);
     OPCODE(184, ret_popped);
     OPCODE(185, pop);
