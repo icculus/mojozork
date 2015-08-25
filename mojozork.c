@@ -1103,12 +1103,9 @@ static void opcode_print_paddr(void)
     print_zscii(unpackAddress(GOperands[0]), 0);
 } // opcode_print_paddr
 
-static void opcode_random(void)
+static uint16fast doRandom(const sint16fast range)
 {
-    uint8 *store = varAddress(*(GPC++), 1);
-    const sint16fast range = (sint16fast) GOperands[0];
     uint16fast result = 0;
-
     if (range == 0)  // reseed in "most random way"
         srandom((unsigned long) time(NULL));
     else if (range < 0)  // reseed with specific value
@@ -1122,7 +1119,14 @@ static void opcode_random(void)
         if (!result)
             result = 1;
     } // else
+    return result;
+} // doRandom
 
+static void opcode_random(void)
+{
+    uint8 *store = varAddress(*(GPC++), 1);
+    const sint16fast range = (sint16fast) GOperands[0];
+    const uint16fast result = doRandom(range);
     WRITEUI16(store, result);
 } // opcode_random
 
@@ -1245,6 +1249,13 @@ static void opcode_read(void)
         opcode_read();  // start over.
         return;
     } // if
+
+    else if (strncmp((const char *) input, "#random ", 8) == 0)
+    {
+        const uint16fast val = doRandom((sint16fast) atoi((const char *) (input+8)));
+        printf("*** random replied: %u\n", (unsigned int) val);
+        return opcode_read();  // go again.
+    } // else if
 
     const uint8 *seps = GStory + GHeader.dict_addr;
     const uint8fast numseps = *(seps++);
