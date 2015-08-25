@@ -78,7 +78,7 @@ static uint8 *GStory = NULL;
 static uintptr GStoryLen = 0;
 static ZHeader GHeader;
 static const uint8 *GPC = 0;
-static uint16fast GLogicalPC = 0;
+static uint32fast GLogicalPC = 0;
 static int GQuit = 0;
 static uint16 GStack[2048];  // !!! FIXME: make this dynamic?
 static uint16 GOperands[8];
@@ -175,7 +175,7 @@ static void opcode_call(void)
     else
     {
         const uint8 *routine = unpackAddress(operands[0]);
-        GLogicalPC = (uint16fast) (routine - GStory);
+        GLogicalPC = (uint32fast) (routine - GStory);
         const uint8fast numlocals = *(routine++);
         if (numlocals > 15)
             die("Routine has too many local variables (%u)", numlocals);
@@ -1192,7 +1192,7 @@ static void runInstruction(void)
 {
     FIXME("verify PC is sane");
 
-    GLogicalPC = (uint16fast) (GPC - GStory);
+    GLogicalPC = (uint32fast) (GPC - GStory);
     uint8 opcode = *(GPC++);
 
     const Opcode *op = NULL;
