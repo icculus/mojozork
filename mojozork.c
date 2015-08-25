@@ -1118,6 +1118,8 @@ static void opcode_random(void)
         long r = random();
         r = (r >> (sizeof (r) / 2) * 8) ^ r;
         result = (uint16fast) ((((float) (r & 0xFFFF)) / 65535.0f) * ((float) range));
+        if (!result)
+            result = 1;
     } // else
 
     WRITEUI16(store, result);
