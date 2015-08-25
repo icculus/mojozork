@@ -86,6 +86,7 @@ static uint8fast GOperandCount = 0;
 static uint16 *GSP = NULL;  // stack pointer
 static uint16fast GBP = 0;  // base pointer
 static char GAlphabetTable[78];
+static const char *GStartupScript = NULL;
 
 static void die(const char *fmt, ...) NORETURN;
 static void die(const char *fmt, ...)
@@ -1156,12 +1157,21 @@ static void opcode_read(void)
     if (parselen < 4)
         die("parse buffer is too small for reading");  // happens on buffer overflow.
 
-    if (script == NULL)
+    if (GStartupScript != NULL)
+    {
+        snprintf((char *) input, inputlen-1, "#script %s\n", GStartupScript);
+        input[inputlen-1] = '\0';
+        GStartupScript = NULL;
+        printf("%s", (const char *) input);
+    } // if
+
+    else if (script == NULL)
     {
         FIXME("fgets isn't really the right solution here.");
         if (!fgets((char *) input, inputlen, stdin))
             die("EOF or error on stdin during read");
-    } // if
+    } // else if
+
     else
     {
         uint8fast i;
@@ -1193,7 +1203,7 @@ static void opcode_read(void)
         memmove(script, scriptptr, strlen(scriptptr) + 1);
         if (script[0] == '\0')
         {
-            printf(" *** Done running script.\n");
+            printf("*** Done running script.\n");
             free(script);
             script = NULL;
         } // if
@@ -1231,8 +1241,9 @@ static void opcode_read(void)
         else if ((fseeko(io, 0, SEEK_SET) == -1) || (fread(script, len, 1, io) != 1))
             die("Failed to read '%s'", fname);
         fclose(io);
-        printf(" *** Running script '%s'...\n", fname);
+        printf("*** Running script '%s'...\n", fname);
         opcode_read();  // start over.
+        return;
     } // if
 
     const uint8 *seps = GStory + GHeader.dict_addr;
@@ -1784,7 +1795,8 @@ static void loadStory(const char *fname)
 
 int main(int argc, char **argv)
 {
-    const char *fname = argv[1] ? argv[1] : "zork1.dat";
+    const char *fname = (argc >= 2) ? argv[1] : "zork1.dat";
+    GStartupScript = (argc >= 3) ? argv[2] : NULL;
     loadStory(fname);
 
     dbg("Story '%s' header:\n", fname);
