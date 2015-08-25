@@ -1123,6 +1123,166 @@ static void opcode_random(void)
     WRITEUI16(store, result);
 } // opcode_random
 
+static uint16fast toZscii(const uint8fast ch)
+{
+    if ((ch >= 'a') && (ch <= 'z'))
+        return (ch - 'a') + 6;
+    else if ((ch >= 'A') && (ch <= 'Z'))
+        return (ch - 'A') + 6;
+    else
+        die("write me");
+    return 0;
+} // toZscii
+
+static void opcode_read(void)
+{
+    dbg("read from input stream: text-buffer=%X parse-buffer=%X\n", (unsigned int) GOperands[0], (unsigned int) GOperands[1]);
+
+    uint8 *input = GStory + GOperands[0];
+    const uint8fast inputlen = *(input++);
+    dbg("max input: %u\n", (unsigned int) inputlen);
+    if (inputlen < 3)
+        die("text buffer is too small for reading");  // happens on buffer overflow.
+
+    uint8 *parse = GStory + GOperands[1];
+    const uint8fast parselen = *(parse++);
+    parse++;  // skip over where we will write the final token count.
+
+    dbg("max parse: %u\n", (unsigned int) parselen);
+    if (parselen < 4)
+        die("parse buffer is too small for reading");  // happens on buffer overflow.
+
+    FIXME("fgets isn't really the right solution here.");
+    //strcpy((char *) input, "look in mailbox");
+    if (!fgets((char *) input, inputlen, stdin))
+        die("EOF or error on stdin during read");
+
+    dbg("input string from user is '%s'\n", (const char *) input);
+    {
+        char *ptr;
+        for (ptr = (char *) input; *ptr; ptr++)
+        {
+            if ((*ptr >= 'A') && (*ptr <= 'Z'))
+                *ptr -= 'A' - 'a';  // make it lowercase.
+            else if ((*ptr == '\n') || (*ptr == '\r'))
+            {
+                *ptr = '\0';
+                break;
+            } // if
+        } // for
+    }
+    
+    const uint8 *seps = GStory + GHeader.dict_addr;
+    const uint8fast numseps = *(seps++);
+    const uint8 *dict = seps + numseps;
+    const uint8fast entrylen = *(dict++);
+    const uint16fast numentries = READUI16(dict);
+    uint8fast numtoks = 0;
+
+    uint8 *strstart = input;
+    uint8 *ptr = (uint8 *) input;
+    while (1)
+    {
+        int isSep = 0;
+        const uint8 ch = *ptr;
+        if ((ch == ' ') || (ch == '\0'))
+            isSep = 1;
+        else
+        {
+            uint8fast i;
+            for (i = 0; i < numseps; i++)
+            {
+                if (ch == seps[i])
+                {
+                    isSep = 1;
+                    break;
+                } // if
+            } // for
+        } // else
+
+        if (isSep)
+        {
+            uint16 encoded[3] = { 0, 0, 0 };
+
+            const uint8fast toklen = (uint8fast) (ptr-strstart);
+
+            uint8fast pos = 0;
+            encoded[0] |= ((pos < toklen) ? toZscii(strstart[pos]) : 5) << 10; pos++;
+            encoded[0] |= ((pos < toklen) ? toZscii(strstart[pos]) : 5) << 5; pos++;
+            encoded[0] |= ((pos < toklen) ? toZscii(strstart[pos]) : 5) << 0; pos++;
+            encoded[1] |= ((pos < toklen) ? toZscii(strstart[pos]) : 5) << 10; pos++;
+            encoded[1] |= ((pos < toklen) ? toZscii(strstart[pos]) : 5) << 5; pos++;
+            encoded[1] |= ((pos < toklen) ? toZscii(strstart[pos]) : 5) << 0; pos++;
+
+            FIXME("this can binary search, since we know how many equal-sized records there are.");
+            const uint8 *dictptr = dict;
+            uint16fast i;
+            if (GHeader.version <= 3)
+            {
+                encoded[1] |= 0x8000;
+
+                FIXME("byteswap 'encoded' and just memcmp here.");
+                for (i = 0; i < numentries; i++)
+                {
+                    const uint16fast zscii1 = READUI16(dictptr);
+                    const uint16fast zscii2 = READUI16(dictptr);
+                    if ((encoded[0] == zscii1) && (encoded[1] == zscii2))
+                    {
+                        dictptr -= sizeof (uint16) * 2;
+                        break;
+                    } // if
+                    dictptr += (entrylen - 4);
+                } // for
+            } // if
+            else
+            {
+                encoded[2] |= ((pos < toklen) ? toZscii(strstart[pos]) : 5) << 10; pos++;
+                encoded[2] |= ((pos < toklen) ? toZscii(strstart[pos]) : 5) << 5; pos++;
+                encoded[2] |= ((pos < toklen) ? toZscii(strstart[pos]) : 5) << 0; pos++;
+                encoded[2] |= 0x8000;
+
+                FIXME("byteswap 'encoded' and just memcmp here.");
+                for (i = 0; i < numentries; i++)
+                {
+                    const uint16fast zscii1 = READUI16(dictptr);
+                    const uint16fast zscii2 = READUI16(dictptr);
+                    const uint16fast zscii3 = READUI16(dictptr);
+                    if ((encoded[0] == zscii1) && (encoded[1] == zscii2) && (encoded[2] == zscii3))
+                    {
+                        dictptr -= sizeof (uint16) * 3;
+                        break;
+                    } // if
+                    dictptr += (entrylen - 6);
+                } // for
+            } // else
+
+            if (i == numentries)
+                dictptr = NULL;  // not found.
+            const uint16fast dictaddr = (unsigned int) (dictptr - GStory);
+
+            //dbg("Tokenized dictindex=%X, tokenlen=%u, strpos=%u\n", (unsigned int) dictaddr, (unsigned int) toklen, (unsigned int) ((uint8) (strstart-input)));
+
+            WRITEUI16(parse, dictaddr);
+            *(parse++) = (uint8) toklen;
+            *(parse++) = (uint8) ((strstart-input) + 1);
+            numtoks++;
+
+            if (numtoks >= parselen)
+                break;  // ran out of space.
+            else if (*ptr == '\0')
+                break;  // ran out of string.
+
+            strstart = ptr + 1;
+        } // if
+
+        ptr++;
+    } // while
+
+    dbg("Tokenized %u tokens\n", (unsigned int) numtoks);
+
+    *(GStory + GOperands[1] + 1) = numtoks;
+} // opcode_read
+
 static void opcode_quit(void)
 {
     GQuit = 1;
@@ -1378,7 +1538,7 @@ static void initOpcodeTable(void)
     OPCODE(225, storew);
     OPCODE(226, storeb);
     OPCODE(227, put_prop);
-    OPCODE_WRITEME(228, read);
+    OPCODE(228, read);
     OPCODE(229, print_char);
     OPCODE(230, print_num);
     OPCODE(231, random);
