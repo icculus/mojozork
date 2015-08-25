@@ -87,6 +87,7 @@ static uint16 *GSP = NULL;  // stack pointer
 static uint16fast GBP = 0;  // base pointer
 static char GAlphabetTable[78];
 static const char *GStartupScript = NULL;
+static char *GStoryFname = NULL;
 
 static void die(const char *fmt, ...) NORETURN;
 static void die(const char *fmt, ...)
@@ -1363,6 +1364,13 @@ static void opcode_read(void)
     *(GStory + GOperands[1] + 1) = numtoks;
 } // opcode_read
 
+static void loadStory(const char *fname);
+
+static void opcode_restart(void)
+{
+    loadStory(GStoryFname);
+} // opcode_restart
+
 static void opcode_quit(void)
 {
     GQuit = 1;
@@ -1607,7 +1615,7 @@ static void initOpcodeTable(void)
     OPCODE(180, nop);
     OPCODE_WRITEME(181, save);
     OPCODE_WRITEME(182, restore);
-    OPCODE_WRITEME(183, restart);
+    OPCODE(183, restart);
     OPCODE(184, ret_popped);
     OPCODE(185, pop);
     OPCODE(186, quit);
@@ -1758,6 +1766,25 @@ static void loadStory(const char *fname)
     FILE *io;
     off_t len;
 
+    if (GStory)
+    {
+        free(GStory);
+        GStory = NULL;
+    } // if
+
+    GInstructionsRun = 0;
+    GStoryLen = 0;
+    GPC = 0;
+    GLogicalPC = 0;
+    GQuit = 0;
+    memset(GStack, '\0', sizeof (GStack));
+    memset(GOperands, '\0', sizeof (GOperands));
+    GOperandCount = 0;
+    GSP = NULL;  // stack pointer
+    GBP = 0;  // base pointer
+    free(GStoryFname);
+    GStoryFname = NULL;
+
     if (!fname)
         die("USAGE: mojozork <story_file>");
     else if ((io = fopen(fname, "rb")) == NULL)
@@ -1768,6 +1795,8 @@ static void loadStory(const char *fname)
         die("Out of memory");
     else if ((fseeko(io, 0, SEEK_SET) == -1) || (fread(GStory, len, 1, io) != 1))
         die("Failed to read '%s'", fname);
+
+    fclose(io);
 
     memset(&GHeader, '\0', sizeof (GHeader));
     const uint8 *ptr = GStory;
@@ -1794,17 +1823,6 @@ static void loadStory(const char *fname)
     GHeader.story_len = READUI16(ptr);
     GHeader.story_checksum = READUI16(ptr);
 
-    fclose(io);
-    GStoryLen = (uintptr) len;
-} // loadStory
-
-
-int main(int argc, char **argv)
-{
-    const char *fname = (argc >= 2) ? argv[1] : "zork1.dat";
-    GStartupScript = (argc >= 3) ? argv[2] : NULL;
-    loadStory(fname);
-
     dbg("Story '%s' header:\n", fname);
     dbg(" - version %u\n", (unsigned int) GHeader.version);
     dbg(" - flags 0x%X\n", (unsigned int) GHeader.flags1);
@@ -1824,6 +1842,9 @@ int main(int argc, char **argv)
     if (GHeader.version != 3)
         die("FIXME: only version 3 is supported right now, this is %d", (int) GHeader.version);
 
+    GStoryLen = (uintptr) len;
+    GStoryFname = strdup(fname);
+
     srandom((unsigned long) time(NULL));
 
     initAlphabetTable();
@@ -1834,6 +1855,14 @@ int main(int argc, char **argv)
     GPC = GStory + GHeader.pc_start;
     GBP = 0;
     GSP = GStack;
+} // loadStory
+
+
+int main(int argc, char **argv)
+{
+    const char *fname = (argc >= 2) ? argv[1] : "zork1.dat";
+    GStartupScript = (argc >= 3) ? argv[2] : NULL;
+    loadStory(fname);
 
     while (!GQuit)
         runInstruction();
@@ -1841,6 +1870,8 @@ int main(int argc, char **argv)
     dbg("ok.\n");
 
     free(GStory);
+    free(GStoryFname);
+
     return 0;
 } // main
 
