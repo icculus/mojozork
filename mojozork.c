@@ -636,14 +636,9 @@ static void opcode_remove_obj(void)
         // Let's take the object out of its original tree.
         if (parentptr != NULL)  // if NULL, no need to remove it.
         {
-            uint8 *ptr = objptr + 6;  // 4 to skip attrs, 2 to skip to child.
-            if (*ptr != objid) // objid is _not_ direct child.
-            {
-                do  // ugh, have to look through sibling list...
-                {
-                    ptr = getObjectPtr(*ptr) + 5;  // get actual direct child's sibling field.
-                } while (*ptr != objid);
-            } // if
+            uint8 *ptr = parentptr + 6;  // 4 to skip attrs, 2 to skip to child.
+            while (*ptr != objid) // if not direct child, look through sibling list...
+                ptr = getObjectPtr(*ptr) + 5;  // get sibling field.
             *ptr = *(objptr + 5);  // obj sibling takes obj's place.
         } // if
 
