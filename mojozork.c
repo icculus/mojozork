@@ -1138,6 +1138,8 @@ static uint16fast toZscii(const uint8fast ch)
 
 static void opcode_read(void)
 {
+    static char *script = NULL;
+
     dbg("read from input stream: text-buffer=%X parse-buffer=%X\n", (unsigned int) GOperands[0], (unsigned int) GOperands[1]);
 
     uint8 *input = GStory + GOperands[0];
@@ -1154,10 +1156,48 @@ static void opcode_read(void)
     if (parselen < 4)
         die("parse buffer is too small for reading");  // happens on buffer overflow.
 
-    FIXME("fgets isn't really the right solution here.");
-    //strcpy((char *) input, "look in mailbox");
-    if (!fgets((char *) input, inputlen, stdin))
-        die("EOF or error on stdin during read");
+    if (script == NULL)
+    {
+        FIXME("fgets isn't really the right solution here.");
+        if (!fgets((char *) input, inputlen, stdin))
+            die("EOF or error on stdin during read");
+    } // if
+    else
+    {
+        uint8fast i;
+        char *scriptptr = script;
+        for (i = 0; i < inputlen; i++, scriptptr++)
+        {
+            const char ch = *scriptptr;
+            if (ch == '\0')
+                break;
+            else if (ch == '\n')
+            {
+                scriptptr++;
+                break;
+            } // else if
+            else if (ch == '\r')
+            {
+                i--;
+                continue;
+            } // else if
+            else
+            {
+                input[i] = (uint8) ch;
+            } // else
+        } // for
+        input[i] = '\0';
+
+        printf("%s\n", input);
+
+        memmove(script, scriptptr, strlen(scriptptr) + 1);
+        if (script[0] == '\0')
+        {
+            printf(" *** Done running script.\n");
+            free(script);
+            script = NULL;
+        } // if
+    } // else
 
     dbg("input string from user is '%s'\n", (const char *) input);
     {
@@ -1173,7 +1213,28 @@ static void opcode_read(void)
             } // if
         } // for
     }
-    
+
+    if (strncmp((const char *) input, "#script ", 8) == 0)
+    {
+        if (script != NULL)
+            die("FIXME: Can't nest scripts at the moment");
+
+        const char *fname = (const char *) (input + 8);
+        off_t len = 0;
+        FILE *io = NULL;
+        if ((io = fopen(fname, "rb")) == NULL)
+            die("Failed to open '%s'", fname);
+        else if ((fseeko(io, 0, SEEK_END) == -1) || ((len = ftello(io)) == -1))
+            die("Failed to determine size of '%s'", fname);
+        else if ((script = malloc(len)) == NULL)
+            die("Out of memory");
+        else if ((fseeko(io, 0, SEEK_SET) == -1) || (fread(script, len, 1, io) != 1))
+            die("Failed to read '%s'", fname);
+        fclose(io);
+        printf(" *** Running script '%s'...\n", fname);
+        opcode_read();  // start over.
+    } // if
+
     const uint8 *seps = GStory + GHeader.dict_addr;
     const uint8fast numseps = *(seps++);
     const uint8 *dict = seps + numseps;
