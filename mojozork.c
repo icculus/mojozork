@@ -40,51 +40,45 @@ typedef uint16_t uint16;
 typedef int16_t sint16;
 typedef uint32_t uint32;
 typedef int32_t sint32;
-typedef uint_fast8_t uint8fast;
-typedef int_fast8_t sint8fast;
-typedef uint_fast16_t uint16fast;
-typedef int_fast16_t sint16fast;
-typedef uint_fast32_t uint32fast;
-typedef int_fast32_t sint32fast;
 
 typedef size_t uintptr;
 
 // !!! FIXME: maybe kill these.
 #define READUI8(ptr) *(ptr++)
-#define READUI16(ptr) ((((uint16fast) ptr[0]) << 8) | ((uint16fast) ptr[1])); ptr += sizeof (uint16)
+#define READUI16(ptr) ((((uint16) ptr[0]) << 8) | ((uint16) ptr[1])); ptr += sizeof (uint16)
 #define WRITEUI16(dst, src) { *(dst++) = (src >> 8) & 0xFF; *(dst++) = (src >> 0) & 0xFF; }
 
 typedef struct ZHeader
 {
-    uint8fast version;
-    uint8fast flags1;
-    uint16fast release;
-    uint16fast himem_addr;
-    uint16fast pc_start;  // in ver6, packed address of main()
-    uint16fast dict_addr;
-    uint16fast objtab_addr;
-    uint16fast globals_addr;
-    uint16fast staticmem_addr;  // offset of static memory, also: size of dynamic mem.
-    uint16fast flags2;
+    uint8 version;
+    uint8 flags1;
+    uint16 release;
+    uint16 himem_addr;
+    uint16 pc_start;  // in ver6, packed address of main()
+    uint16 dict_addr;
+    uint16 objtab_addr;
+    uint16 globals_addr;
+    uint16 staticmem_addr;  // offset of static memory, also: size of dynamic mem.
+    uint16 flags2;
     char serial_code[7];  // six ASCII chars in ver2. In ver3+: ASCII of completion date: YYMMDD
-    uint16fast abbrtab_addr;  // abbreviations table
-    uint16fast story_len;
-    uint16fast story_checksum;
+    uint16 abbrtab_addr;  // abbreviations table
+    uint16 story_len;
+    uint16 story_checksum;
     // !!! FIXME: more fields here, all of which are ver4+
 } ZHeader;
 
-static uint32fast GInstructionsRun = 0;
+static uint32 GInstructionsRun = 0;
 static uint8 *GStory = NULL;
 static uintptr GStoryLen = 0;
 static ZHeader GHeader;
 static const uint8 *GPC = 0;
-static uint32fast GLogicalPC = 0;
+static uint32 GLogicalPC = 0;
 static int GQuit = 0;
 static uint16 GStack[2048];  // !!! FIXME: make this dynamic?
 static uint16 GOperands[8];
-static uint8fast GOperandCount = 0;
+static uint8 GOperandCount = 0;
 static uint16 *GSP = NULL;  // stack pointer
-static uint16fast GBP = 0;  // base pointer
+static uint16 GBP = 0;  // base pointer
 static char GAlphabetTable[78];
 static const char *GStartupScript = NULL;
 static char *GStoryFname = NULL;
@@ -111,7 +105,7 @@ static void die(const char *fmt, ...)
 typedef void (*OpcodeFn)(void);
 
 // The Z-Machine can't directly address 32-bits, but this needs to expand past 16 bits when we multiply by 2, 4, or 8, etc.
-static uint8 *unpackAddress(const uint32fast addr)
+static uint8 *unpackAddress(const uint32 addr)
 {
     if (GHeader.version <= 3)
         return (GStory + (addr * 2));
@@ -126,7 +120,7 @@ static uint8 *unpackAddress(const uint32fast addr)
     return NULL;
 } // unpackAddress
 
-static uint8 *varAddress(const uint8fast var, const int writing)
+static uint8 *varAddress(const uint8 var, const int writing)
 {
     if (var == 0) // top of stack
     {
@@ -142,7 +136,7 @@ static uint8 *varAddress(const uint8fast var, const int writing)
             if (GSP == GStack)
                 die("Stack underflow");  // nothing on the stack at all?
 
-            const uint16fast numlocals = GBP ? GStack[GBP-1] : 0;
+            const uint16 numlocals = GBP ? GStack[GBP-1] : 0;
             if ((GBP + numlocals) >= (GSP-GStack))
                 die("Stack underflow");  // no stack data left in this frame.
 
@@ -165,9 +159,9 @@ static uint8 *varAddress(const uint8fast var, const int writing)
 
 static void opcode_call(void)
 {
-    uint8fast args = GOperandCount;
+    uint8 args = GOperandCount;
     const uint16 *operands = GOperands;
-    const uint8fast storeid = *(GPC++);
+    const uint8 storeid = *(GPC++);
     // no idea if args==0 should be the same as calling addr 0...
     if ((args == 0) || (operands[0] == 0))  // legal no-op; store 0 to return value and bounce.
     {
@@ -177,8 +171,8 @@ static void opcode_call(void)
     else
     {
         const uint8 *routine = unpackAddress(operands[0]);
-        GLogicalPC = (uint32fast) (routine - GStory);
-        const uint8fast numlocals = *(routine++);
+        GLogicalPC = (uint32) (routine - GStory);
+        const uint8 numlocals = *(routine++);
         if (numlocals > 15)
             die("Routine has too many local variables (%u)", numlocals);
 
@@ -194,9 +188,9 @@ static void opcode_call(void)
         *(GSP++) = GBP;  // current base pointer before the call.
         *(GSP++) = numlocals;  // number of locals we're allocating.
 
-        GBP = (uint16fast) (GSP-GStack);
+        GBP = (uint16) (GSP-GStack);
 
-        sint8fast i;
+        sint8 i;
         if (GHeader.version <= 4)
         {
             for (i = 0; i < numlocals; i++, routine += sizeof (uint16))
@@ -224,7 +218,7 @@ static void opcode_call(void)
     } // else
 } // opcode_call
 
-static void doReturn(const uint16fast val)
+static void doReturn(const uint16 val)
 {
     FIXME("newer versions start in a real routine, but still aren't allowed to return from it.");
     if (GBP == 0)
@@ -242,7 +236,7 @@ static void doReturn(const uint16fast val)
 
     GPC = GStory + pcoffset;  // next instruction is one following our original call.
 
-    const uint8fast storeid = (uint8fast) *(--GSP);  // pop the result storage location.
+    const uint8 storeid = (uint8) *(--GSP);  // pop the result storage location.
 
     dbg("returning: new pc=%X, bp=%u, sp=%u\n", (unsigned int) (GPC-GStory), (unsigned int) GBP, (unsigned int) (GSP-GStack));
     uint8 *store = varAddress(storeid, 1);  // and store the routine result.
@@ -267,7 +261,7 @@ static void opcode_rfalse(void)
 static void opcode_ret_popped(void)
 {
     uint8 *ptr = varAddress(0, 0);   // top of stack.
-    const uint16fast result = READUI16(ptr);
+    const uint16 result = READUI16(ptr);
     doReturn(result);
 } // opcode_ret_popped
 
@@ -280,7 +274,7 @@ static void opcode_push(void)
 static void opcode_pull(void)
 {
     uint8 *ptr = varAddress(0, 0);   // top of stack.
-    const uint16fast val = READUI16(ptr);
+    const uint16 val = READUI16(ptr);
     uint8 *store = varAddress(GOperands[0], 1);
     WRITEUI16(store, val);
 } // opcode_pull
@@ -314,12 +308,12 @@ static void doBranch(int truth)
 
     if (truth == onTruth)  // take the branch?
     {
-        sint16fast offset = (sint16fast) (branch & 0x3F);
+        sint16 offset = (sint16) (branch & 0x3F);
         if (farjump)
         {
             if (offset & (1 << 5))
                 offset |= 0xC0;   // extend out sign bit.
-            offset = (offset << 8) | ((sint16fast) byte2);
+            offset = (offset << 8) | ((sint16) byte2);
         } // else
 
         if (offset == 0)  // return false from current routine.
@@ -333,8 +327,8 @@ static void doBranch(int truth)
 
 static void opcode_je(void)
 {
-    const uint16fast a = GOperands[0];
-    sint8fast i;
+    const uint16 a = GOperands[0];
+    sint8 i;
     for (i = 1; i < GOperandCount; i++)
     {
         if (a == GOperands[i])
@@ -354,12 +348,12 @@ static void opcode_jz(void)
 
 static void opcode_jl(void)
 {
-    doBranch((((sint16fast) GOperands[0]) < ((sint16fast) GOperands[1])) ? 1 : 0);
+    doBranch((((sint16) GOperands[0]) < ((sint16) GOperands[1])) ? 1 : 0);
 } // opcode_jl
 
 static void opcode_jg(void)
 {
-    doBranch((((sint16fast) GOperands[0]) > ((sint16fast) GOperands[1])) ? 1 : 0);
+    doBranch((((sint16) GOperands[0]) > ((sint16) GOperands[1])) ? 1 : 0);
 } // opcode_jg
 
 static void opcode_test(void)
@@ -402,37 +396,37 @@ static void opcode_mul(void)
 static void opcode_or(void)
 {
     uint8 *store = varAddress(*(GPC++), 1);
-    const uint16fast result = (GOperands[0] | GOperands[1]);
+    const uint16 result = (GOperands[0] | GOperands[1]);
     WRITEUI16(store, result);
 } // opcode_or
 
 static void opcode_and(void)
 {
     uint8 *store = varAddress(*(GPC++), 1);
-    const uint16fast result = (GOperands[0] & GOperands[1]);
+    const uint16 result = (GOperands[0] & GOperands[1]);
     WRITEUI16(store, result);
 } // opcode_and
 
 static void opcode_not(void)
 {
     uint8 *store = varAddress(*(GPC++), 1);
-    const uint16fast result = ~GOperands[0];
+    const uint16 result = ~GOperands[0];
     WRITEUI16(store, result);
 } // opcode_not
 
 static void opcode_inc_chk(void)
 {
-    uint8 *store = varAddress((uint8fast) GOperands[0], 1);
+    uint8 *store = varAddress((uint8) GOperands[0], 1);
     sint16 val = READUI16(store);
     store -= sizeof (uint16);
     val++;
     WRITEUI16(store, (uint16) val);
-    doBranch( (((sint16fast) val) > ((sint16fast) GOperands[1])) ? 1 : 0 );
+    doBranch( (((sint16) val) > ((sint16) GOperands[1])) ? 1 : 0 );
 } // opcode_inc_chk
 
 static void opcode_inc(void)
 {
-    uint8 *store = varAddress((uint8fast) GOperands[0], 1);
+    uint8 *store = varAddress((uint8) GOperands[0], 1);
     sint16 val = (sint16) READUI16(store);
     store -= sizeof (uint16);
     val++;
@@ -441,17 +435,17 @@ static void opcode_inc(void)
 
 static void opcode_dec_chk(void)
 {
-    uint8 *store = varAddress((uint8fast) GOperands[0], 1);
+    uint8 *store = varAddress((uint8) GOperands[0], 1);
     sint16 val = (sint16) READUI16(store);
     store -= sizeof (uint16);
     val--;
     WRITEUI16(store, (uint16) val);
-    doBranch( (((sint16fast) val) < ((sint16fast) GOperands[1])) ? 1 : 0 );
+    doBranch( (((sint16) val) < ((sint16) GOperands[1])) ? 1 : 0 );
 } // opcode_dec_chk
 
 static void opcode_dec(void)
 {
-    uint8 *store = varAddress((uint8fast) GOperands[0], 1);
+    uint8 *store = varAddress((uint8) GOperands[0], 1);
     sint16 val = (sint16) READUI16(store);
     store -= sizeof (uint16);
     val--;
@@ -479,7 +473,7 @@ static void opcode_loadb(void)
     FIXME("can only read from dynamic or static memory (not highmem).");
     FIXME("how does overflow work here? Do these wrap around?");
     const uint8 *src = GStory + (GOperands[0] + (GOperands[1]));
-    const uint16fast value = *src;  // expand out to 16-bit before storing.
+    const uint16 value = *src;  // expand out to 16-bit before storing.
     WRITEUI16(store, value);
 } // opcode_loadb
 
@@ -503,13 +497,13 @@ static void opcode_storeb(void)
 
 static void opcode_store(void)
 {
-    uint8 *store = varAddress((uint8fast) (GOperands[0] & 0xFF), 1);
+    uint8 *store = varAddress((uint8) (GOperands[0] & 0xFF), 1);
     const uint16 src = GOperands[1];
     WRITEUI16(store, src);
 } // opcode_store
 
 
-static uint8 *getObjectPtr(const uint16fast objid)
+static uint8 *getObjectPtr(const uint16 objid)
 {
     if (objid == 0)
         die("Object id #0 referenced");
@@ -525,8 +519,8 @@ static uint8 *getObjectPtr(const uint16fast objid)
 
 static void opcode_test_attr(void)
 {
-    const uint16fast objid = GOperands[0];
-    const uint16fast attrid = GOperands[1];
+    const uint16 objid = GOperands[0];
+    const uint16 attrid = GOperands[1];
     uint8 *ptr = getObjectPtr(objid);
 
     if (GHeader.version <= 3)
@@ -542,8 +536,8 @@ static void opcode_test_attr(void)
 
 static void opcode_set_attr(void)
 {
-    const uint16fast objid = GOperands[0];
-    const uint16fast attrid = GOperands[1];
+    const uint16 objid = GOperands[0];
+    const uint16 attrid = GOperands[1];
     uint8 *ptr = getObjectPtr(objid);
 
     if (GHeader.version <= 3)
@@ -559,8 +553,8 @@ static void opcode_set_attr(void)
 
 static void opcode_clear_attr(void)
 {
-    const uint16fast objid = GOperands[0];
-    const uint16fast attrid = GOperands[1];
+    const uint16 objid = GOperands[0];
+    const uint16 attrid = GOperands[1];
     uint8 *ptr = getObjectPtr(objid);
 
     if (GHeader.version <= 3)
@@ -579,7 +573,7 @@ static uint8 *getObjectPtrParent(uint8 *objptr)
     if (GHeader.version <= 3)
     {
         objptr += 4;  // skip object attributes.
-        const uint16fast parent = *objptr;
+        const uint16 parent = *objptr;
         return parent ? getObjectPtr(parent) : NULL;
     }
     else
@@ -590,8 +584,8 @@ static uint8 *getObjectPtrParent(uint8 *objptr)
 
 static void opcode_insert_obj(void)
 {
-    const uint16fast objid = GOperands[0];
-    const uint16fast dstid = GOperands[1];
+    const uint16 objid = GOperands[0];
+    const uint16 dstid = GOperands[1];
 
     uint8 *objptr = getObjectPtr(objid);
     uint8 *dstptr = getObjectPtr(dstid);
@@ -624,7 +618,7 @@ static void opcode_insert_obj(void)
 
 static void opcode_remove_obj(void)
 {
-    const uint16fast objid = GOperands[0];
+    const uint16 objid = GOperands[0];
 
     uint8 *objptr = getObjectPtr(objid);
     uint8 *parentptr = getObjectPtrParent(objptr);
@@ -655,23 +649,23 @@ static void opcode_remove_obj(void)
 
 static void opcode_put_prop(void)
 {
-    const uint16fast objid = GOperands[0];
-    const uint16fast propid = GOperands[1];
-    const uint16fast value = GOperands[2];
+    const uint16 objid = GOperands[0];
+    const uint16 propid = GOperands[1];
+    const uint16 value = GOperands[2];
 
     uint8 *ptr = getObjectPtr(objid);
 
     if (GHeader.version <= 3)
     {
         ptr += 7;  // skip to properties address field.
-        const uint16fast addr = READUI16(ptr);
+        const uint16 addr = READUI16(ptr);
         ptr = GStory + addr;
         ptr += (*ptr * 2) + 1;  // skip object name to start of properties.
         while (1)
         {
-            const uint8fast info = *(ptr++);
-            const uint16fast num = (info & 0x1F);  // 5 bits for the prop id.
-            const uint8fast size = ((info >> 5) & 0x7) + 1; // 3 bits for prop size.
+            const uint8 info = *(ptr++);
+            const uint16 num = (info & 0x1F);  // 5 bits for the prop id.
+            const uint8 size = ((info >> 5) & 0x7) + 1; // 3 bits for prop size.
             // these go in descending numeric order, and should fail
             //  the interpreter if missing.
             if (num < propid)
@@ -696,7 +690,7 @@ static void opcode_put_prop(void)
     } // else
 } // opcode_put_prop
 
-static uint16fast getDefaultObjectProperty(const uint16fast propid)
+static uint16 getDefaultObjectProperty(const uint16 propid)
 {
     if ( ((GHeader.version <= 3) && (propid > 31)) ||
          ((GHeader.version >= 4) && (propid > 63)) )
@@ -707,30 +701,30 @@ static uint16fast getDefaultObjectProperty(const uint16fast propid)
 
     const uint8 *values = (GStory + GHeader.objtab_addr);
     values += (propid-1) * sizeof (uint16);
-    const uint16fast result = READUI16(values);
+    const uint16 result = READUI16(values);
     return result;
 } // getDefaultObjectProperty
 
 static void opcode_get_prop(void)
 {
     uint8 *store = varAddress(*(GPC++), 1);
-    const uint16fast objid = GOperands[0];
-    const uint16fast propid = GOperands[1];
-    uint16fast result = 0;
+    const uint16 objid = GOperands[0];
+    const uint16 propid = GOperands[1];
+    uint16 result = 0;
 
     uint8 *ptr = getObjectPtr(objid);
 
     if (GHeader.version <= 3)
     {
         ptr += 7;  // skip to properties address field.
-        const uint16fast addr = READUI16(ptr);
+        const uint16 addr = READUI16(ptr);
         ptr = GStory + addr;
         ptr += (*ptr * 2) + 1;  // skip object name to start of properties.
         while (1)
         {
-            const uint8fast info = *(ptr++);
-            const uint16fast num = (info & 0x1F);  // 5 bits for the prop id.
-            const uint8fast size = ((info >> 5) & 0x7) + 1; // 3 bits for prop size.
+            const uint8 info = *(ptr++);
+            const uint16 num = (info & 0x1F);  // 5 bits for the prop id.
+            const uint8 size = ((info >> 5) & 0x7) + 1; // 3 bits for prop size.
             // these go in descending numeric order
             if (num < propid)  // missing for this object? Use the default.
             {
@@ -763,29 +757,29 @@ static void opcode_get_prop_addr(void)
 {
     FIXME("So much code dupe");
     uint8 *store = varAddress(*(GPC++), 1);
-    const uint16fast objid = GOperands[0];
-    const uint16fast propid = GOperands[1];
-    uint16fast result = 0;
+    const uint16 objid = GOperands[0];
+    const uint16 propid = GOperands[1];
+    uint16 result = 0;
 
     uint8 *ptr = getObjectPtr(objid);
 
     if (GHeader.version <= 3)
     {
         ptr += 7;  // skip to properties address field.
-        const uint16fast addr = READUI16(ptr);
+        const uint16 addr = READUI16(ptr);
         ptr = GStory + addr;
         ptr += (*ptr * 2) + 1;  // skip object name to start of properties.
         while (1)
         {
-            const uint8fast info = *(ptr++);
-            const uint16fast num = (info & 0x1F);  // 5 bits for the prop id.
-            const uint8fast size = ((info >> 5) & 0x7) + 1; // 3 bits for prop size.
+            const uint8 info = *(ptr++);
+            const uint16 num = (info & 0x1F);  // 5 bits for the prop id.
+            const uint8 size = ((info >> 5) & 0x7) + 1; // 3 bits for prop size.
             // these go in descending numeric order
             if (num < propid)  // missing for this object?
                 break;
             else if (num == propid)  // found it?
             {
-                result = (uint16fast) (ptr - GStory);
+                result = (uint16) (ptr - GStory);
                 break;
             } // else if
 
@@ -804,14 +798,14 @@ static void opcode_get_prop_len(void)
 {
     uint8 *store = varAddress(*(GPC++), 1);
     const uint8 *ptr = GStory + GOperands[0];
-    uint16fast result = 0;
+    uint16 result = 0;
 
     if (GOperands[0] == 0)
         result = 0;  // this must return 0, to avoid a bug in older Infocom games.
     else if (GHeader.version <= 3)
     {
         ptr--;  // go back to size field.
-        const uint8fast info = *ptr;
+        const uint8 info = *ptr;
         result = ((info >> 5) & 0x7) + 1; // 3 bits for prop size.
     } // if
     else
@@ -826,24 +820,24 @@ static void opcode_get_next_prop(void)
 {
     FIXME("So much code dupe");
     uint8 *store = varAddress(*(GPC++), 1);
-    const uint16fast objid = GOperands[0];
-    const uint16fast propid = GOperands[1];
+    const uint16 objid = GOperands[0];
+    const uint16 propid = GOperands[1];
     int thisone = (propid == 0);  // zero == "first property in the list"
-    uint16fast result = 0;
+    uint16 result = 0;
 
     uint8 *ptr = getObjectPtr(objid);
 
     if (GHeader.version <= 3)
     {
         ptr += 7;  // skip to properties address field.
-        const uint16fast addr = READUI16(ptr);
+        const uint16 addr = READUI16(ptr);
         ptr = GStory + addr;
         ptr += (*ptr * 2) + 1;  // skip object name to start of properties.
         while (1)
         {
-            const uint8fast info = *(ptr++);
-            const uint16fast num = (info & 0x1F);  // 5 bits for the prop id.
-            const uint8fast size = ((info >> 5) & 0x7) + 1; // 3 bits for prop size.
+            const uint8 info = *(ptr++);
+            const uint16 num = (info & 0x1F);  // 5 bits for the prop id.
+            const uint8 size = ((info >> 5) & 0x7) + 1; // 3 bits for prop size.
             // these go in descending numeric order
             if (thisone)
             {
@@ -870,19 +864,19 @@ static void opcode_get_next_prop(void)
 
 static void opcode_jin(void)
 {
-    const uint16fast objid = GOperands[0];
-    const uint16fast parentid = GOperands[1];
+    const uint16 objid = GOperands[0];
+    const uint16 parentid = GOperands[1];
     const uint8 *objptr = getObjectPtr(objid);
 
     if (GHeader.version <= 3)
-        doBranch((((uint16fast) objptr[4]) == parentid) ? 1 : 0);
+        doBranch((((uint16) objptr[4]) == parentid) ? 1 : 0);
     else
     {
         die("write me");  // fields are different in ver4+.
     } // else
 } // opcode_jin
 
-static uint16fast getObjectRelationship(const uint16fast objid, const uint8fast relationship)
+static uint16 getObjectRelationship(const uint16 objid, const uint8 relationship)
 {
     const uint8 *objptr = getObjectPtr(objid);
 
@@ -897,14 +891,14 @@ static uint16fast getObjectRelationship(const uint16fast objid, const uint8fast 
 static void opcode_get_parent(void)
 {
     uint8 *store = varAddress(*(GPC++), 1);
-    const uint16fast result = getObjectRelationship(GOperands[0], 4);
+    const uint16 result = getObjectRelationship(GOperands[0], 4);
     WRITEUI16(store, result);
 } // opcode_get_parent
 
 static void opcode_get_sibling(void)
 {
     uint8 *store = varAddress(*(GPC++), 1);
-    const uint16fast result = getObjectRelationship(GOperands[0], 5);
+    const uint16 result = getObjectRelationship(GOperands[0], 5);
     WRITEUI16(store, result);
     doBranch((result != 0) ? 1: 0);
 } // opcode_get_sibling
@@ -912,7 +906,7 @@ static void opcode_get_sibling(void)
 static void opcode_get_child(void)
 {
     uint8 *store = varAddress(*(GPC++), 1);
-    const uint16fast result = getObjectRelationship(GOperands[0], 6);
+    const uint16 result = getObjectRelationship(GOperands[0], 6);
     WRITEUI16(store, result);
     doBranch((result != 0) ? 1: 0);
 } // opcode_get_child
@@ -923,7 +917,7 @@ static void opcode_new_line(void)
     fflush(stdout);
 } // opcode_new_line
 
-static void print_zscii_char(const uint16fast val)
+static void print_zscii_char(const uint16 val)
 {
     char ch = 0;
 
@@ -949,30 +943,30 @@ static uintptr print_zscii(const uint8 *_str, const int abbr)
 {
     // ZCSII encoding is so nasty.
     const uint8 *str = _str;
-    uint16fast code = 0;
-    uint8fast alphabet = 0;
-    uint8fast useAbbrTable = 0;
-    uint8fast zscii_collector = 0;
-    uint16fast zscii_code = 0;
+    uint16 code = 0;
+    uint8 alphabet = 0;
+    uint8 useAbbrTable = 0;
+    uint8 zscii_collector = 0;
+    uint16 zscii_code = 0;
 
     do
     {
         code = READUI16(str);
 
         // characters are 5 bits each, packed three to a 16-bit word.
-        sint8fast i;
+        sint8 i;
         for (i = 10; i >= 0; i -= 5)
         {
             int newshift = 0;
             char printVal = 0;
-            const uint8fast ch = ((code >> i) & 0x1F);
+            const uint8 ch = ((code >> i) & 0x1F);
 
             if (zscii_collector)
             {
                 if (zscii_collector == 2)
-                    zscii_code |= ((uint16fast) ch) << 5;
+                    zscii_code |= ((uint16) ch) << 5;
                 else
-                    zscii_code |= ((uint16fast) ch);
+                    zscii_code |= ((uint16) ch);
 
                 zscii_collector--;
                 if (!zscii_collector)
@@ -990,7 +984,7 @@ static uintptr print_zscii(const uint8 *_str, const int abbr)
                 //FIXME("Make sure offset is sane");
                 const uintptr index = ((32 * (((uintptr) useAbbrTable) - 1)) + (uintptr) ch);
                 const uint8 *ptr = (GStory + GHeader.abbrtab_addr) + (index * sizeof (uint16));
-                const uint16fast abbraddr = READUI16(ptr);
+                const uint16 abbraddr = READUI16(ptr);
                 print_zscii(GStory + (abbraddr * sizeof (uint16)), 1);
                 useAbbrTable = 0;
                 alphabet = 0;  // FIXME: no shift locking in ver3+, but ver1 needs it.
@@ -1080,7 +1074,7 @@ static void opcode_print_obj(void)
     if (GHeader.version <= 3)
     {
         ptr += 7;  // skip to properties field.
-        const uint16fast addr = READUI16(ptr);  // dereference to get to property table.
+        const uint16 addr = READUI16(ptr);  // dereference to get to property table.
         print_zscii(GStory + addr + 1, 0);
     } // if
     else
@@ -1099,9 +1093,9 @@ static void opcode_print_paddr(void)
     print_zscii(unpackAddress(GOperands[0]), 0);
 } // opcode_print_paddr
 
-static uint16fast doRandom(const sint16fast range)
+static uint16 doRandom(const sint16 range)
 {
-    uint16fast result = 0;
+    uint16 result = 0;
     if (range == 0)  // reseed in "most random way"
         srandom((unsigned long) time(NULL));
     else if (range < 0)  // reseed with specific value
@@ -1111,7 +1105,7 @@ static uint16fast doRandom(const sint16fast range)
         FIXME("this is sucky");
         long r = random();
         r = (r >> (sizeof (r) / 2) * 8) ^ r;
-        result = (uint16fast) ((((float) (r & 0xFFFF)) / 65535.0f) * ((float) range));
+        result = (uint16) ((((float) (r & 0xFFFF)) / 65535.0f) * ((float) range));
         if (!result)
             result = 1;
     } // else
@@ -1121,12 +1115,12 @@ static uint16fast doRandom(const sint16fast range)
 static void opcode_random(void)
 {
     uint8 *store = varAddress(*(GPC++), 1);
-    const sint16fast range = (sint16fast) GOperands[0];
-    const uint16fast result = doRandom(range);
+    const sint16 range = (sint16) GOperands[0];
+    const uint16 result = doRandom(range);
     WRITEUI16(store, result);
 } // opcode_random
 
-static uint16fast toZscii(const uint8fast ch)
+static uint16 toZscii(const uint8 ch)
 {
     if ((ch >= 'a') && (ch <= 'z'))
         return (ch - 'a') + 6;
@@ -1144,13 +1138,13 @@ static void opcode_read(void)
     dbg("read from input stream: text-buffer=%X parse-buffer=%X\n", (unsigned int) GOperands[0], (unsigned int) GOperands[1]);
 
     uint8 *input = GStory + GOperands[0];
-    const uint8fast inputlen = *(input++);
+    const uint8 inputlen = *(input++);
     dbg("max input: %u\n", (unsigned int) inputlen);
     if (inputlen < 3)
         die("text buffer is too small for reading");  // happens on buffer overflow.
 
     uint8 *parse = GStory + GOperands[1];
-    const uint8fast parselen = *(parse++);
+    const uint8 parselen = *(parse++);
     parse++;  // skip over where we will write the final token count.
 
     dbg("max parse: %u\n", (unsigned int) parselen);
@@ -1174,7 +1168,7 @@ static void opcode_read(void)
 
     else
     {
-        uint8fast i;
+        uint8 i;
         char *scriptptr = script;
         for (i = 0; i < inputlen; i++, scriptptr++)
         {
@@ -1248,17 +1242,17 @@ static void opcode_read(void)
 
     else if (strncmp((const char *) input, "#random ", 8) == 0)
     {
-        const uint16fast val = doRandom((sint16fast) atoi((const char *) (input+8)));
+        const uint16 val = doRandom((sint16) atoi((const char *) (input+8)));
         printf("*** random replied: %u\n", (unsigned int) val);
         return opcode_read();  // go again.
     } // else if
 
     const uint8 *seps = GStory + GHeader.dict_addr;
-    const uint8fast numseps = *(seps++);
+    const uint8 numseps = *(seps++);
     const uint8 *dict = seps + numseps;
-    const uint8fast entrylen = *(dict++);
-    const uint16fast numentries = READUI16(dict);
-    uint8fast numtoks = 0;
+    const uint8 entrylen = *(dict++);
+    const uint16 numentries = READUI16(dict);
+    uint8 numtoks = 0;
 
     uint8 *strstart = input;
     uint8 *ptr = (uint8 *) input;
@@ -1270,7 +1264,7 @@ static void opcode_read(void)
             isSep = 1;
         else
         {
-            uint8fast i;
+            uint8 i;
             for (i = 0; i < numseps; i++)
             {
                 if (ch == seps[i])
@@ -1285,9 +1279,9 @@ static void opcode_read(void)
         {
             uint16 encoded[3] = { 0, 0, 0 };
 
-            const uint8fast toklen = (uint8fast) (ptr-strstart);
+            const uint8 toklen = (uint8) (ptr-strstart);
 
-            uint8fast pos = 0;
+            uint8 pos = 0;
             encoded[0] |= ((pos < toklen) ? toZscii(strstart[pos]) : 5) << 10; pos++;
             encoded[0] |= ((pos < toklen) ? toZscii(strstart[pos]) : 5) << 5; pos++;
             encoded[0] |= ((pos < toklen) ? toZscii(strstart[pos]) : 5) << 0; pos++;
@@ -1297,7 +1291,7 @@ static void opcode_read(void)
 
             FIXME("this can binary search, since we know how many equal-sized records there are.");
             const uint8 *dictptr = dict;
-            uint16fast i;
+            uint16 i;
             if (GHeader.version <= 3)
             {
                 encoded[1] |= 0x8000;
@@ -1305,8 +1299,8 @@ static void opcode_read(void)
                 FIXME("byteswap 'encoded' and just memcmp here.");
                 for (i = 0; i < numentries; i++)
                 {
-                    const uint16fast zscii1 = READUI16(dictptr);
-                    const uint16fast zscii2 = READUI16(dictptr);
+                    const uint16 zscii1 = READUI16(dictptr);
+                    const uint16 zscii2 = READUI16(dictptr);
                     if ((encoded[0] == zscii1) && (encoded[1] == zscii2))
                     {
                         dictptr -= sizeof (uint16) * 2;
@@ -1325,9 +1319,9 @@ static void opcode_read(void)
                 FIXME("byteswap 'encoded' and just memcmp here.");
                 for (i = 0; i < numentries; i++)
                 {
-                    const uint16fast zscii1 = READUI16(dictptr);
-                    const uint16fast zscii2 = READUI16(dictptr);
-                    const uint16fast zscii3 = READUI16(dictptr);
+                    const uint16 zscii1 = READUI16(dictptr);
+                    const uint16 zscii2 = READUI16(dictptr);
+                    const uint16 zscii3 = READUI16(dictptr);
                     if ((encoded[0] == zscii1) && (encoded[1] == zscii2) && (encoded[2] == zscii3))
                     {
                         dictptr -= sizeof (uint16) * 3;
@@ -1339,7 +1333,7 @@ static void opcode_read(void)
 
             if (i == numentries)
                 dictptr = NULL;  // not found.
-            const uint16fast dictaddr = (unsigned int) (dictptr - GStory);
+            const uint16 dictaddr = (unsigned int) (dictptr - GStory);
 
             //dbg("Tokenized dictindex=%X, tokenlen=%u, strpos=%u\n", (unsigned int) dictaddr, (unsigned int) toklen, (unsigned int) ((uint8) (strstart-input)));
 
@@ -1439,7 +1433,7 @@ static Opcode GOpcodes[256];
 static Opcode GExtendedOpcodes[30];
 
 
-static int parseOperand(const uint8fast optype, uint16 *operand)
+static int parseOperand(const uint8 optype, uint16 *operand)
 {
     switch (optype)
     {
@@ -1456,15 +1450,15 @@ static int parseOperand(const uint8fast optype, uint16 *operand)
     return 0;
 } // parseOperand
 
-static uint8fast parseVarOperands(uint16 *operands)
+static uint8 parseVarOperands(uint16 *operands)
 {
-    const uint8fast operandTypes = *(GPC++);
-    uint8fast shifter = 6;
-    uint8fast i;
+    const uint8 operandTypes = *(GPC++);
+    uint8 shifter = 6;
+    uint8 i;
 
     for (i = 0; i < 4; i++)
     {
-        const uint8fast optype = (operandTypes >> shifter) & 0x3;
+        const uint8 optype = (operandTypes >> shifter) & 0x3;
         shifter -= 2;
         if (!parseOperand(optype, operands + i))
             break;
@@ -1478,7 +1472,7 @@ static void runInstruction(void)
 {
     FIXME("verify PC is sane");
 
-    GLogicalPC = (uint32fast) (GPC - GStory);
+    GLogicalPC = (uint32) (GPC - GStory);
     uint8 opcode = *(GPC++);
 
     const Opcode *op = NULL;
@@ -1504,7 +1498,7 @@ static void runInstruction(void)
         else if (opcode <= 175)  // 1OP
         {
             GOperandCount = 1;
-            const uint8fast optype = (opcode >> 4) & 0x3;
+            const uint8 optype = (opcode >> 4) & 0x3;
             parseOperand(optype, GOperands);  // 1OP or 0OP
         } // else if
 
@@ -1538,7 +1532,7 @@ static void runInstruction(void)
         dbg("pc=%X %sopcode=%u ('%s') [", (unsigned int) GLogicalPC, extended ? "ext " : "", opcode, op->name);
         if (GOperandCount)
         {
-            uint8fast i;
+            uint8 i;
             for (i = 0; i < GOperandCount-1; i++)
                 dbg("%X,", (unsigned int) GOperands[i]);
             dbg("%X", (unsigned int) GOperands[i]);
@@ -1554,7 +1548,7 @@ static void initAlphabetTable(void)
     FIXME("ver5+ specifies alternate tables in the header");
 
     char *ptr = GAlphabetTable;
-    uint8fast i;
+    uint8 i;
 
     // alphabet A0
     for (i = 0; i < 26; i++)
@@ -1794,7 +1788,7 @@ static void initOpcodeTable(void)
 
 static void finalizeOpcodeTable(void)
 {
-    uint8fast i;
+    uint8 i;
     for (i = 32; i <= 127; i++)  // 2OP opcodes repeating with different operand forms.
         GOpcodes[i] = GOpcodes[i % 32];
     for (i = 144; i <= 175; i++)  // 1OP opcodes repeating with different operand forms.
