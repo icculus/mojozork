@@ -1,0 +1,175 @@
+
+These are the instructions you need to implement to get to the title/copyright:
+
+add
+call
+je
+jump
+jz
+loadw
+print
+put_prop
+ret
+store
+storew
+sub
+test_attr
+new_line
+
+
+...these are all the opcodes that Zork 1 uses, below. Of all the 119 opcodes,
+not all are available to the version 3 Z-Machine, but Zork doesn't use even
+all of those:
+
+ADD
+AND
+CALL
+CLEAR_ATTR
+DEC
+DEC_CHK
+DIV
+GET_CHILD
+GET_NEXT_PROP
+GET_PARENT
+GET_PROP
+GET_PROP_ADDR
+GET_PROP_LEN
+GET_SIBLING
+INC
+INC_CHK
+INSERT_OBJ
+JE
+JG
+JIN
+JL
+JUMP
+JZ
+LOAD
+LOADB
+LOADW
+MOD
+MUL
+NEW_LINE
+OR
+PRINT
+PRINT_ADDR
+PRINT_CHAR
+PRINT_NUM
+PRINT_OBJ
+PRINT_PADDR
+PRINT_RET
+PULL
+PUSH
+PUT_PROP
+QUIT
+RANDOM
+READ
+REMOVE_OBJ
+RESTART
+RESTORE
+RET
+RET_POPPED
+RFALSE
+RTRUE
+SAVE
+SET_ATTR
+STORE
+STOREB
+STOREW
+SUB
+TEST
+TEST_ATTR
+VERIFY
+
+
+
+
+These are the opcodes that are, strictly, part of Version 3, but they
+were added very late in the Version 3 era. Most Infocom games will run
+without them.
+
+    188 show_status
+    189 verify
+    234 split_window
+    235 set_window
+    243 output_stream
+    244 input_stream
+    245 sound_effect
+
+Then version 4 added 20 more opcodes, and adjusted some data structures to
+allow for more objects, metadata, etc.
+
+    188 show_status
+    189 verify
+    234 split_window
+    235 set_window
+    243 output_stream
+    244 input_stream
+    245 sound_effect
+    25 call_2s
+    180 save_ver4
+    224 call_vs;
+    228 sread_ver4
+    236 call_vs2
+    237 erase_window
+    238 erase_line
+    239 set_cursor
+    240 get_cursor
+    241 set_text_style
+    242 buffer_mode
+    246 read_char
+    247 scan_table
+
+Then Version 5 added 28 more opcodes (etc):
+
+    26 call_2n
+    27 set_colour
+    28 throw
+    136 call_1s
+    143 call_1n
+    185 catch
+    191 piracy
+    228 aread
+    243 output_stream_ver5
+    245 sound_effect_ver5
+    248 not_ver5
+    249 call_vn
+    250 call_vn2
+    251 tokenise
+    252 encode_text
+    253 copy_table
+    254 print_table
+    255 check_arg_count
+    ext0 save_ext
+    ext1 restore_ext
+    ext2 log_shift
+    ext3 art_shift
+    ext4 set_font
+    ext9 save_undo
+    ext10 restore_undo
+    ext11 print_unicode
+    ext12 check_unicode
+    ext13 set_true_colour
+
+And finally, in Version 6:
+    ext5 draw_picture
+    ext6 picture_data
+    ext7 erase_picture
+    ext8 set_margins
+    ext16 move_window
+    ext17 window_size
+    ext18 window_style
+    ext19 get_wind_prop
+    ext20 scroll_window
+    ext21 pop_stack
+    ext22 read_mouse
+    ext23 mouse_window
+    ext24 push_stack
+    ext25 put_wind_prop
+    ext26 print_form
+    ext27 make_menu
+    ext28 picture_table
+    ext29 buffer_screen
+
+Version 7 and 8 add no new instructions.
+
