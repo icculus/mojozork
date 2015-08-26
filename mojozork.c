@@ -502,7 +502,6 @@ static void opcode_store(void)
     WRITEUI16(store, src);
 } // opcode_store
 
-
 static uint8 *getObjectPtr(const uint16 objid)
 {
     if (objid == 0)
@@ -582,6 +581,19 @@ static uint8 *getObjectPtrParent(uint8 *objptr)
     } // else
 } // getGetObjectPtrParent
 
+static void unparentObject(const uint16 objid)
+{
+    uint8 *objptr = getObjectPtr(objid);
+    uint8 *parentptr = getObjectPtrParent(objptr);
+    if (parentptr != NULL)  // if NULL, no need to remove it.
+    {
+        uint8 *ptr = parentptr + 6;  // 4 to skip attrs, 2 to skip to child.
+        while (*ptr != objid) // if not direct child, look through sibling list...
+            ptr = getObjectPtr(*ptr) + 5;  // get sibling field.
+        *ptr = *(objptr + 5);  // obj sibling takes obj's place.
+    } // if
+} // unparentObject
+
 static void opcode_insert_obj(void)
 {
     const uint16 objid = GOperands[0];
@@ -589,23 +601,12 @@ static void opcode_insert_obj(void)
 
     uint8 *objptr = getObjectPtr(objid);
     uint8 *dstptr = getObjectPtr(dstid);
-    uint8 *parentptr = getObjectPtrParent(objptr);
 
     if (GHeader.version <= 3)
     {
-        // this child/sibling thing is messy. There's a lot of tapdancing to
-        //  move stuff around.
+        unparentObject(objid);  // take object out of its original tree first.
 
-        // Let's take the object out of its original tree first.
-        if (parentptr != NULL)  // if NULL, no need to remove it.
-        {   //p s c
-            uint8 *ptr = parentptr + 6;  // 4 to skip attrs, 2 to skip to child.
-            while (*ptr != objid) // if not direct child, look through sibling list...
-                ptr = getObjectPtr(*ptr) + 5;  // get sibling field.
-            *ptr = *(objptr + 5);  // obj sibling takes obj's place.
-        } // if
-
-        // now insert in the right place.
+        // now reinsert in the right place.
         *(objptr + 4) = (uint8) dstid;  // parent field: new destination
         *(objptr + 5) = *(dstptr + 6);  // sibling field: new dest's old child.
         *(dstptr + 6) = objid;  // dest's child field: object being moved.
@@ -619,40 +620,22 @@ static void opcode_insert_obj(void)
 static void opcode_remove_obj(void)
 {
     const uint16 objid = GOperands[0];
-
     uint8 *objptr = getObjectPtr(objid);
-    uint8 *parentptr = getObjectPtrParent(objptr);
 
-    if (GHeader.version <= 3)
+    if (GHeader.version > 3)
+        die("write me");  // fields are different in ver4+.
+    else
     {
-        // this child/sibling thing is messy. There's a lot of tapdancing to
-        //  move stuff around.
-
-        // Let's take the object out of its original tree.
-        if (parentptr != NULL)  // if NULL, no need to remove it.
-        {
-            uint8 *ptr = parentptr + 6;  // 4 to skip attrs, 2 to skip to child.
-            while (*ptr != objid) // if not direct child, look through sibling list...
-                ptr = getObjectPtr(*ptr) + 5;  // get sibling field.
-            *ptr = *(objptr + 5);  // obj sibling takes obj's place.
-        } // if
+        unparentObject(objid);  // take object out of its original tree first.
 
         // now clear out object's relationships...
         *(objptr + 4) = 0;  // parent field: zero.
         *(objptr + 5) = 0;  // sibling field: zero.
-    } // if
-    else
-    {
-        die("write me");  // fields are different in ver4+.
     } // else
 } // opcode_remove_obj
 
-static void opcode_put_prop(void)
+static uint8 *getObjectProperty(const uint16 objid, const uint32 propid, uint8 *_size)
 {
-    const uint16 objid = GOperands[0];
-    const uint16 propid = GOperands[1];
-    const uint16 value = GOperands[2];
-
     uint8 *ptr = getObjectPtr(objid);
 
     if (GHeader.version <= 3)
@@ -667,19 +650,16 @@ static void opcode_put_prop(void)
             const uint16 num = (info & 0x1F);  // 5 bits for the prop id.
             const uint8 size = ((info >> 5) & 0x7) + 1; // 3 bits for prop size.
             // these go in descending numeric order, and should fail
-            //  the interpreter if missing.
-            if (num < propid)
-                die("put_prop on missing object property (obj=%X, prop=%X, val=%x)", (unsigned int) objid, (unsigned int) propid, (unsigned int) value);
-            else if (num == propid)  // found it?
+            //  the interpreter if missing. We use 0xFFFFFFFF internally to mean "first property".
+            if ((num == propid) || (propid == 0xFFFFFFFF))  // found it?
             {
-                if (size == 1)
-                    *ptr = (value & 0xFF);
-                else
-                {
-                    WRITEUI16(ptr, value);
-                } // else
-                return;
-            } // else if
+                if (_size)
+                    *_size = size;
+                return ptr;
+            } // if
+
+            else if (num < propid)  // we're past it.
+                break;
 
             ptr += size;  // try the next property.
         } // while
@@ -687,6 +667,26 @@ static void opcode_put_prop(void)
     else
     {
         die("write me");
+    } // else
+
+    return NULL;
+} // getObjectProperty
+
+static void opcode_put_prop(void)
+{
+    const uint16 objid = GOperands[0];
+    const uint16 propid = GOperands[1];
+    const uint16 value = GOperands[2];
+    uint8 size = 0;
+    uint8 *ptr = getObjectProperty(objid, propid, &size);
+
+    if (!ptr)
+        die("Lookup on missing object property (obj=%X, prop=%X)", (unsigned int) objid, (unsigned int) propid);
+    else if (size == 1)
+        *ptr = (value & 0xFF);
+    else
+    {
+        WRITEUI16(ptr, value);
     } // else
 } // opcode_put_prop
 
@@ -711,43 +711,16 @@ static void opcode_get_prop(void)
     const uint16 objid = GOperands[0];
     const uint16 propid = GOperands[1];
     uint16 result = 0;
+    uint8 size = 0;
+    uint8 *ptr = getObjectProperty(objid, propid, &size);
 
-    uint8 *ptr = getObjectPtr(objid);
-
-    if (GHeader.version <= 3)
-    {
-        ptr += 7;  // skip to properties address field.
-        const uint16 addr = READUI16(ptr);
-        ptr = GStory + addr;
-        ptr += (*ptr * 2) + 1;  // skip object name to start of properties.
-        while (1)
-        {
-            const uint8 info = *(ptr++);
-            const uint16 num = (info & 0x1F);  // 5 bits for the prop id.
-            const uint8 size = ((info >> 5) & 0x7) + 1; // 3 bits for prop size.
-            // these go in descending numeric order
-            if (num < propid)  // missing for this object? Use the default.
-            {
-                result = getDefaultObjectProperty(propid);
-                break;
-            } // if
-            else if (num == propid)  // found it?
-            {
-                if (size == 1)
-                    result = *ptr;
-                else
-                {
-                    result = READUI16(ptr);
-                } // else
-                break;
-            } // else if
-
-            ptr += size;  // try the next property.
-        } // while
-    } // if
+    if (!ptr)
+        result = getDefaultObjectProperty(propid);
+    else if (size == 1)
+        result = *ptr;
     else
     {
-        die("write me");
+        result = READUI16(ptr);
     } // else
 
     WRITEUI16(store, result);
@@ -755,57 +728,25 @@ static void opcode_get_prop(void)
 
 static void opcode_get_prop_addr(void)
 {
-    FIXME("So much code dupe");
     uint8 *store = varAddress(*(GPC++), 1);
     const uint16 objid = GOperands[0];
     const uint16 propid = GOperands[1];
-    uint16 result = 0;
-
-    uint8 *ptr = getObjectPtr(objid);
-
-    if (GHeader.version <= 3)
-    {
-        ptr += 7;  // skip to properties address field.
-        const uint16 addr = READUI16(ptr);
-        ptr = GStory + addr;
-        ptr += (*ptr * 2) + 1;  // skip object name to start of properties.
-        while (1)
-        {
-            const uint8 info = *(ptr++);
-            const uint16 num = (info & 0x1F);  // 5 bits for the prop id.
-            const uint8 size = ((info >> 5) & 0x7) + 1; // 3 bits for prop size.
-            // these go in descending numeric order
-            if (num < propid)  // missing for this object?
-                break;
-            else if (num == propid)  // found it?
-            {
-                result = (uint16) (ptr - GStory);
-                break;
-            } // else if
-
-            ptr += size;  // try the next property.
-        } // while
-    } // if
-    else
-    {
-        die("write me");
-    } // else
-
+    uint8 *ptr = getObjectProperty(objid, propid, NULL);
+    const uint16 result = ptr ? ((uint16) (ptr-GStory)) : 0;
     WRITEUI16(store, result);
 } // opcode_get_prop_addr
 
 static void opcode_get_prop_len(void)
 {
     uint8 *store = varAddress(*(GPC++), 1);
-    const uint8 *ptr = GStory + GOperands[0];
-    uint16 result = 0;
+    uint16 result;
 
     if (GOperands[0] == 0)
         result = 0;  // this must return 0, to avoid a bug in older Infocom games.
     else if (GHeader.version <= 3)
     {
-        ptr--;  // go back to size field.
-        const uint8 info = *ptr;
+        const uint8 *ptr = GStory + GOperands[0];
+        const uint8 info = ptr[-1];  // the size field.
         result = ((info >> 5) & 0x7) + 1; // 3 bits for prop size.
     } // if
     else
@@ -818,46 +759,19 @@ static void opcode_get_prop_len(void)
 
 static void opcode_get_next_prop(void)
 {
-    FIXME("So much code dupe");
     uint8 *store = varAddress(*(GPC++), 1);
     const uint16 objid = GOperands[0];
-    const uint16 propid = GOperands[1];
-    int thisone = (propid == 0);  // zero == "first property in the list"
+    const int firstProp = (GOperands[1] == 0);
     uint16 result = 0;
+    uint8 size = 0;
+    uint8 *ptr = getObjectProperty(objid, firstProp ? 0xFFFFFFFF : GOperands[1], &size);
 
-    uint8 *ptr = getObjectPtr(objid);
-
-    if (GHeader.version <= 3)
-    {
-        ptr += 7;  // skip to properties address field.
-        const uint16 addr = READUI16(ptr);
-        ptr = GStory + addr;
-        ptr += (*ptr * 2) + 1;  // skip object name to start of properties.
-        while (1)
-        {
-            const uint8 info = *(ptr++);
-            const uint16 num = (info & 0x1F);  // 5 bits for the prop id.
-            const uint8 size = ((info >> 5) & 0x7) + 1; // 3 bits for prop size.
-            // these go in descending numeric order
-            if (thisone)
-            {
-                result = num;
-                break;
-            } // if
-
-            else if (num < propid)  // missing for this object?
-                die("get_next_prop on missing propery");
-
-            else if (num == propid)  // found it?
-                thisone = 1;
-
-            ptr += size;  // try the next property.
-        } // while
-    } // if
+    if (!ptr)
+        die("get_next_prop on missing property obj=%X, prop=%X", (unsigned int) objid, (unsigned int) GOperands[1]);
+    else if (GHeader.version <= 3)
+        result = ptr[firstProp ? -1 : ((sint8) size)] & 0x1F;  // 5 bits for the prop id.
     else
-    {
         die("write me");
-    } // else
 
     WRITEUI16(store, result);
 } // opcode_get_next_prop
@@ -871,9 +785,7 @@ static void opcode_jin(void)
     if (GHeader.version <= 3)
         doBranch((((uint16) objptr[4]) == parentid) ? 1 : 0);
     else
-    {
         die("write me");  // fields are different in ver4+.
-    } // else
 } // opcode_jin
 
 static uint16 getObjectRelationship(const uint16 objid, const uint8 relationship)
@@ -883,9 +795,7 @@ static uint16 getObjectRelationship(const uint16 objid, const uint8 relationship
     if (GHeader.version <= 3)
         return objptr[relationship];
     else
-    {
         die("write me");  // fields are different in ver4+.
-    } // else
 } // getObjectRelationship
 
 static void opcode_get_parent(void)
@@ -1893,7 +1803,6 @@ static void loadStory(const char *fname)
     GBP = 0;
     GSP = GStack;
 } // loadStory
-
 
 int main(int argc, char **argv)
 {
