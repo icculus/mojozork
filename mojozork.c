@@ -13,7 +13,7 @@
 
 static inline void dbg(const char *fmt, ...)
 {
-#if 1
+#if 0
     va_list ap;
     va_start(ap, fmt);
     vfprintf(stderr, fmt, ap);
