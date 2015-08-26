@@ -1,3 +1,11 @@
+/**
+ * MojoZork; a simple, just-for-fun implementation of Infocom's Z-Machine.
+ *
+ * Please see the file LICENSE.txt in the source's root directory.
+ *
+ *  This file written by Ryan C. Gordon.
+ */
+
 // The Z-Machine specifications 1.1:
 //     http://inform-fiction.org/zmachine/standards/z1point1/index.html
 
@@ -1822,4 +1830,3 @@ int main(int argc, char **argv)
 } // main
 
 // end of mojozork.c ...
-
