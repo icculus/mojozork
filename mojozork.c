@@ -1282,6 +1282,18 @@ static void opcode_read(void)
     *(GStory + GOperands[1] + 1) = numtoks;
 } // opcode_read
 
+static void opcode_verify(void)
+{
+    const uint32 total = GHeader.story_len;
+    uint32 checksum = 0;
+    uint32 i;
+
+    for (i = 0x40; i < total; i++)
+        checksum += GStory[i];
+
+    doBranch((((uint16) (checksum % 0x10000)) == GHeader.story_checksum) ? 1 : 0);
+} // opcode_verify
+
 static void loadStory(const char *fname);
 
 static void opcode_restart(void)
@@ -1598,7 +1610,7 @@ static void initOpcodeTable(void)
         return;  // we're done.
 
     OPCODE(188, show_status);
-    OPCODE_WRITEME(189, verify);
+    OPCODE(189, verify);
     OPCODE_WRITEME(234, split_window);
     OPCODE_WRITEME(235, set_window);
     OPCODE_WRITEME(243, output_stream);
