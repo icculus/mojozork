@@ -1049,6 +1049,11 @@ static uint16 toZscii(const uint8 ch)
     return 0;
 } // toZscii
 
+static void opcode_show_status(void)
+{
+    FIXME("redraw the status bar here");
+} // opcode_show_status
+
 static void opcode_read(void)
 {
     static char *script = NULL;
@@ -1079,6 +1084,7 @@ static void opcode_read(void)
 
     else if (script == NULL)
     {
+        opcode_show_status();
         FIXME("fgets isn't really the right solution here.");
         if (!fgets((char *) input, inputlen, stdin))
             die("EOF or error on stdin during read");
@@ -1591,7 +1597,7 @@ static void initOpcodeTable(void)
     if (GHeader.version < 3)  // most early Infocom games are version 3.
         return;  // we're done.
 
-    OPCODE_WRITEME(188, show_status);
+    OPCODE(188, show_status);
     OPCODE_WRITEME(189, verify);
     OPCODE_WRITEME(234, split_window);
     OPCODE_WRITEME(235, set_window);
@@ -1601,6 +1607,10 @@ static void initOpcodeTable(void)
 
     if (GHeader.version < 4)
         return;  // we're done.
+
+    // show_status is illegal in ver4+, but a build of Wishbringer
+    //  accidentally calls it, so treat it as NOP instead.
+    opcodes[188].fn = opcode_nop;
 
     OPCODE_WRITEME(25, call_2s);
     OPCODE_WRITEME(180, save_ver4);
