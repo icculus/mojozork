@@ -1778,8 +1778,9 @@ static void loadStory(const char *fname)
     memset(&GHeader, '\0', sizeof (GHeader));
     const uint8 *ptr = GStory;
 
-    GStory[1] |= 0x8;  // report that we don't (currently) support a status bar.
-    
+    //GStory[1] &= ~(1<<3);  // this is the infamous "Tandy Bit". Turn it off.
+    GStory[1] |= (1<<4);  // report that we don't (currently) support a status bar.
+
     GHeader.version = READUI8(ptr);
     GHeader.flags1 = READUI8(ptr);
     GHeader.release = READUI16(ptr);
