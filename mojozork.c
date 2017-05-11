@@ -945,7 +945,7 @@ static uintptr print_zscii(const uint8 *_str, const int abbr)
                     if ((ch == 6) && (alphabet == 2))
                         zscii_collector = 2;
                     else
-                        printVal = GAlphabetTable[(alphabet*26) + (ch-6)]; break;
+                        printVal = GAlphabetTable[(alphabet*26) + (ch-6)];
                     break;
             } // switch
 
