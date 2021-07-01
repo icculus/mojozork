@@ -1,5 +1,10 @@
+# MojoZork
 
-WHAT IS THIS?
+```
+> read pamphlet
+```
+
+Hello sailor!
 
 This is an implementation of Infocom's Z-Machine. The Z-Machine is an virtual
 machine that's something like a high-level CPU. To keep their games portable
@@ -9,8 +14,8 @@ someone had implemented the Z-Machine.
 
 This project is just for fun; everyone should write this at some point as an
 educational activity. If you want a serious Z-Machine implementation, there
-are certainly better ones out there (I personally recommend "Frotz" at
-http://frotz.sourceforge.net/ and there are many others, too).
+are certainly better ones out there (I personally recommend
+["Frotz"](http://frotz.sourceforge.net/) and there are many others, too).
 
 This program currently supports most of the Version 3 Z-Machine. This is
 enough to play the vast majority of Infocom's catalog. Later Infocom games
@@ -24,18 +29,18 @@ for free, so I've included Zork I's data files with this project. If you want
 to see Zork I run through from start to finish, you can run a pre-written
 script to complete the entire game from the command line, like this:
 
-    ./mojozork ./zork1.dat ./zork1-script.txt
+```
+./mojozork ./zork1.dat ./zork1-script.txt
+```
 
 If you want to write your own Z-Machine, there is an "official" specification
 on how to implement it, written by people that spent significant time
 reverse engineering the originals from Infocom, and extending the ecosystem
-with new tools. You can find that specification here:
+with new tools. You can find that specification
+[here](http://inform-fiction.org/zmachine/standards/).
 
-    http://inform-fiction.org/zmachine/standards/
-
-As usual, Wikipedia offers a wonderful rabbit hole to fall down, too:
-
-    https://en.wikipedia.org/wiki/Z-machine
+As usual, Wikipedia offers a wonderful rabbit hole to fall down, too, in
+their [Z-machine article](https://en.wikipedia.org/wiki/Z-machine).
 
 Enjoy!
 
