@@ -12,7 +12,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <time.h>
@@ -106,7 +105,7 @@ static void die(const char *fmt, ...)
     fflush(stderr);
     fflush(stdout);
 
-    _exit(1);
+    exit(1);
 } // die
 
 
