@@ -16,8 +16,6 @@
 #include <stdint.h>
 #include <time.h>
 
-#define NORETURN __attribute__((noreturn))
-
 static inline void dbg(const char *fmt, ...)
 {
 #if 0
@@ -53,7 +51,7 @@ typedef size_t uintptr;
 // !!! FIXME: maybe kill these.
 #define READUI8(ptr) *(ptr++)
 #define READUI16(ptr) ((((uint16) ptr[0]) << 8) | ((uint16) ptr[1])); ptr += sizeof (uint16)
-#define WRITEUI16(dst, src) { *(dst++) = (src >> 8) & 0xFF; *(dst++) = (src >> 0) & 0xFF; }
+#define WRITEUI16(dst, src) { *(dst++) = (uint8) ((src >> 8) & 0xFF); *(dst++) = (uint8) (src & 0xFF); }
 
 typedef struct ZHeader
 {
@@ -90,7 +88,12 @@ static char GAlphabetTable[78];
 static const char *GStartupScript = NULL;
 static char *GStoryFname = NULL;
 
-static void die(const char *fmt, ...) NORETURN;
+#ifdef _MSC_VER
+__declspec(noreturn) static void die(const char *fmt, ...);
+#elif defined(__GNUC__) || defined(__clang__)
+static void die(const char *fmt, ...) __attribute__((noreturn));
+#endif
+
 static void die(const char *fmt, ...)
 {
     va_list ap;
@@ -889,7 +892,8 @@ static uintptr print_zscii(const uint8 *_str, const int abbr)
                 if (!zscii_collector)
                 {
                     print_zscii_char(zscii_code);
-                    alphabet = useAbbrTable = zscii_code = 0;
+                    alphabet = useAbbrTable = 0;
+                    zscii_code = 0;
                 } // if
                 continue;
             } // if
@@ -1147,15 +1151,15 @@ static void opcode_read(void)
             die("FIXME: Can't nest scripts at the moment");
 
         const char *fname = (const char *) (input + 8);
-        off_t len = 0;
+        long len = 0;
         FILE *io = NULL;
         if ((io = fopen(fname, "rb")) == NULL)
             die("Failed to open '%s'", fname);
-        else if ((fseeko(io, 0, SEEK_END) == -1) || ((len = ftello(io)) == -1))
+        else if ((fseek(io, 0, SEEK_END) == -1) || ((len = ftell(io)) == -1))
             die("Failed to determine size of '%s'", fname);
         else if ((script = malloc(len)) == NULL)
             die("Out of memory");
-        else if ((fseeko(io, 0, SEEK_SET) == -1) || (fread(script, len, 1, io) != 1))
+        else if ((fseek(io, 0, SEEK_SET) == -1) || (fread(script, len, 1, io) != 1))
             die("Failed to read '%s'", fname);
         fclose(io);
         printf("*** Running script '%s'...\n", fname);
@@ -1167,7 +1171,8 @@ static void opcode_read(void)
     {
         const uint16 val = doRandom((sint16) atoi((const char *) (input+8)));
         printf("*** random replied: %u\n", (unsigned int) val);
-        return opcode_read();  // go again.
+        opcode_read();  // go again.
+        return;
     } // else if
 
     const uint8 *seps = GStory + GHeader.dict_addr;
@@ -1740,7 +1745,7 @@ static void finalizeOpcodeTable(void)
 static void loadStory(const char *fname)
 {
     FILE *io;
-    off_t len;
+    long len;
 
     if (GStory)
     {
@@ -1765,11 +1770,11 @@ static void loadStory(const char *fname)
         die("USAGE: mojozork <story_file>");
     else if ((io = fopen(fname, "rb")) == NULL)
         die("Failed to open '%s'", fname);
-    else if ((fseeko(io, 0, SEEK_END) == -1) || ((len = ftello(io)) == -1))
+    else if ((fseek(io, 0, SEEK_END) == -1) || ((len = ftell(io)) == -1))
         die("Failed to determine size of '%s'", fname);
     else if ((GStory = malloc(len)) == NULL)
         die("Out of memory");
-    else if ((fseeko(io, 0, SEEK_SET) == -1) || (fread(GStory, len, 1, io) != 1))
+    else if ((fseek(io, 0, SEEK_SET) == -1) || (fread(GStory, len, 1, io) != 1))
         die("Failed to read '%s'", fname);
 
     fclose(io);
