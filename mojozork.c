@@ -16,6 +16,11 @@
 #include <stdint.h>
 #include <time.h>
 
+#ifdef _MSC_VER  // oh well.
+#define random rand
+#define srandom srand
+#endif
+
 static inline void dbg(const char *fmt, ...)
 {
 #if 0
@@ -285,7 +290,7 @@ static void opcode_pull(void)
 {
     uint8 *ptr = varAddress(0, 0);   // top of stack.
     const uint16 val = READUI16(ptr);
-    uint8 *store = varAddress(GOperands[0], 1);
+    uint8 *store = varAddress((uint8) GOperands[0], 1);
     WRITEUI16(store, val);
 } // opcode_pull
 
@@ -619,7 +624,7 @@ static void opcode_insert_obj(void)
         // now reinsert in the right place.
         *(objptr + 4) = (uint8) dstid;  // parent field: new destination
         *(objptr + 5) = *(dstptr + 6);  // sibling field: new dest's old child.
-        *(dstptr + 6) = objid;  // dest's child field: object being moved.
+        *(dstptr + 6) = (uint8) objid;  // dest's child field: object being moved.
     } // if
     else
     {
