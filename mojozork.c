@@ -1751,20 +1751,20 @@ static void finalizeOpcodeTable(void)
         GOpcodes[i] = GOpcodes[i % 32];
 } // finalizeOpcodeTable
 
-
-static void loadStory(const char *fname)
+// WE OWN THIS copy of story, which we will free() later. Caller should not free it!
+static void initStory(const char *fname, uint8 *story, const uint32 storylen)
 {
-    FILE *io;
-    long len;
-
     if (GState.story)
     {
         free(GState.story);
         GState.story = NULL;
     } // if
 
+    free(GState.story_filename);
+    GState.story = story;
+    GState.story_len = (uintptr) storylen;
+    GState.story_filename = strdup(fname);
     GState.instructions_run = 0;
-    GState.story_len = 0;
     GState.pc = 0;
     GState.logical_pc = 0;
     GState.quit = 0;
@@ -1773,21 +1773,6 @@ static void loadStory(const char *fname)
     GState.operand_count = 0;
     GState.sp = NULL;  // stack pointer
     GState.bp = 0;  // base pointer
-    free(GState.story_filename);
-    GState.story_filename = NULL;
-
-    if (!fname)
-        die("USAGE: mojozork <story_file>");
-    else if ((io = fopen(fname, "rb")) == NULL)
-        die("Failed to open '%s'", fname);
-    else if ((fseek(io, 0, SEEK_END) == -1) || ((len = ftell(io)) == -1))
-        die("Failed to determine size of '%s'", fname);
-    else if ((GState.story = malloc(len)) == NULL)
-        die("Out of memory");
-    else if ((fseek(io, 0, SEEK_SET) == -1) || (fread(GState.story, len, 1, io) != 1))
-        die("Failed to read '%s'", fname);
-
-    fclose(io);
 
     memset(&GState.header, '\0', sizeof (GState.header));
     const uint8 *ptr = GState.story;
@@ -1834,11 +1819,6 @@ static void loadStory(const char *fname)
     if (GState.header.version != 3)
         die("FIXME: only version 3 is supported right now, this is %d", (int) GState.header.version);
 
-    GState.story_len = (uintptr) len;
-    GState.story_filename = strdup(fname);
-
-    srandom((unsigned long) time(NULL));
-
     initAlphabetTable();
     initOpcodeTable();
     finalizeOpcodeTable();
@@ -1847,12 +1827,37 @@ static void loadStory(const char *fname)
     GState.pc = GState.story + GState.header.pc_start;
     GState.bp = 0;
     GState.sp = GState.stack;
+}
+
+static void loadStory(const char *fname)
+{
+    uint8 *story;
+    FILE *io;
+    long len;
+
+    if (!fname)
+        die("USAGE: mojozork <story_file>");
+    else if ((io = fopen(fname, "rb")) == NULL)
+        die("Failed to open '%s'", fname);
+    else if ((fseek(io, 0, SEEK_END) == -1) || ((len = ftell(io)) == -1))
+        die("Failed to determine size of '%s'", fname);
+    else if ((story = (uint8 *) malloc(len)) == NULL)
+        die("Out of memory");
+    else if ((fseek(io, 0, SEEK_SET) == -1) || (fread(story, len, 1, io) != 1))
+        die("Failed to read '%s'", fname);
+
+    fclose(io);
+
+    initStory(fname, story, (uint32) len);
 } // loadStory
 
 int main(int argc, char **argv)
 {
     const char *fname = (argc >= 2) ? argv[1] : "zork1.dat";
     GState.startup_script = (argc >= 3) ? argv[2] : NULL;
+
+    srandom((unsigned long) time(NULL));
+
     loadStory(fname);
 
     while (!GState.quit)
