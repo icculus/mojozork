@@ -7,7 +7,7 @@
  */
 
 // The Z-Machine specifications 1.1:
-//     http://inform-fiction.org/zmachine/standards/z1point1/index.html
+//     https://inform-fiction.org/zmachine/standards/z1point1/index.html
 
 #include <stdio.h>
 #include <stdlib.h>
