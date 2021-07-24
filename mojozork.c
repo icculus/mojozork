@@ -21,17 +21,19 @@
 #define srandom srand
 #endif
 
+#define MOJOZORK_DEBUGGING 0
+
 static inline void dbg(const char *fmt, ...)
 {
-#if 0
+#if MOJOZORK_DEBUGGING
     va_list ap;
     va_start(ap, fmt);
-    vfprintf(stderr, fmt, ap);
+    vfprintf(stdout, fmt, ap);
     va_end(ap);
 #endif
 } // dbg
 
-#if 0
+#if !MOJOZORK_DEBUGGING
 #define FIXME(what)
 #else
 #define FIXME(what) { \
@@ -58,6 +60,14 @@ typedef size_t uintptr;
 #define READUI16(ptr) ((((uint16) ptr[0]) << 8) | ((uint16) ptr[1])); ptr += sizeof (uint16)
 #define WRITEUI16(dst, src) { *(dst++) = (uint8) ((src >> 8) & 0xFF); *(dst++) = (uint8) (src & 0xFF); }
 
+typedef void (*OpcodeFn)(void);
+
+typedef struct
+{
+    const char *name;
+    OpcodeFn fn;
+} Opcode;
+
 typedef struct ZHeader
 {
     uint8 version;
@@ -77,6 +87,7 @@ typedef struct ZHeader
     // !!! FIXME: more fields here, all of which are ver4+
 } ZHeader;
 
+
 typedef struct ZMachineState
 {
     uint32 instructions_run;
@@ -94,35 +105,25 @@ typedef struct ZMachineState
     char alphabet_table[78];
     const char *startup_script;
     char *story_filename;
+
+    // this is kinda wasteful (we could pack the 89 opcodes in their various forms
+    //  into separate arrays and strip off the metadata bits) but it simplifies
+    //  some things to just have a big linear array.
+    Opcode opcodes[256];
+
+    // The extended ones, however, only have one form, so we pack that tight.
+    Opcode extended_opcodes[30];
+
+    void (*writechar)(const int ch);
+    #ifdef _MSC_VER
+    __declspec(noreturn) void (*die)(const char *fmt, ...);
+    #elif defined(__GNUC__) || defined(__clang__)
+    void (*die)(const char *fmt, ...) __attribute__((noreturn));
+    #endif
 } ZMachineState;
 
 static ZMachineState *GState = NULL;
 
-#ifdef _MSC_VER
-__declspec(noreturn) static void die(const char *fmt, ...);
-#elif defined(__GNUC__) || defined(__clang__)
-static void die(const char *fmt, ...) __attribute__((noreturn));
-#endif
-
-static void die(const char *fmt, ...)
-{
-    va_list ap;
-
-    fprintf(stderr, "\nERROR: ");
-    va_start(ap, fmt);
-    vfprintf(stderr, fmt, ap);
-    va_end(ap);
-    fprintf(stderr, " (pc=%X)\n", (unsigned int) GState->logical_pc);
-    fprintf(stderr, " %u instructions run\n", (unsigned int) GState->instructions_run);
-    fprintf(stderr, "\n");
-    fflush(stderr);
-    fflush(stdout);
-
-    exit(1);
-} // die
-
-
-typedef void (*OpcodeFn)(void);
 
 // The Z-Machine can't directly address 32-bits, but this needs to expand past 16 bits when we multiply by 2, 4, or 8, etc.
 static uint8 *unpackAddress(const uint32 addr)
@@ -132,11 +133,11 @@ static uint8 *unpackAddress(const uint32 addr)
     else if (GState->header.version <= 5)
         return (GState->story + (addr * 4));
     else if (GState->header.version <= 6)
-        die("write me");  //   4P + 8R_O    Versions 6 and 7, for routine calls ... or 4P + 8S_O    Versions 6 and 7, for print_paddr
+        GState->die("write me");  //   4P + 8R_O    Versions 6 and 7, for routine calls ... or 4P + 8S_O    Versions 6 and 7, for print_paddr
     else if (GState->header.version <= 8)
         return (GState->story + (addr * 8));
 
-    die("FIXME Unsupported version for packed addressing");
+    GState->die("FIXME Unsupported version for packed addressing");
     return NULL;
 } // unpackAddress
 
@@ -147,18 +148,18 @@ static uint8 *varAddress(const uint8 var, const int writing)
         if (writing)
         {
             if ((GState->sp-GState->stack) >= (sizeof (GState->stack) / sizeof (GState->stack[0])))
-                die("Stack overflow");
+                GState->die("Stack overflow");
             dbg("push stack\n");
             return (uint8 *) GState->sp++;
         } // if
         else
         {
             if (GState->sp == GState->stack)
-                die("Stack underflow");  // nothing on the stack at all?
+                GState->die("Stack underflow");  // nothing on the stack at all?
 
             const uint16 numlocals = GState->bp ? GState->stack[GState->bp-1] : 0;
             if ((GState->bp + numlocals) >= (GState->sp-GState->stack))
-                die("Stack underflow");  // no stack data left in this frame.
+                GState->die("Stack underflow");  // no stack data left in this frame.
 
             dbg("pop stack\n");
             return (uint8 *) --GState->sp;
@@ -168,7 +169,7 @@ static uint8 *varAddress(const uint8 var, const int writing)
     else if ((var >= 0x1) && (var <= 0xF))  // local var.
     {
         if (GState->stack[GState->bp-1] <= (var-1))
-            die("referenced unallocated local var #%u (%u available)", (unsigned int) (var-1), (unsigned int) GState->stack[GState->bp-1]);
+            GState->die("referenced unallocated local var #%u (%u available)", (unsigned int) (var-1), (unsigned int) GState->stack[GState->bp-1]);
         return (uint8 *) &GState->stack[GState->bp + (var-1)];
     } // else if
 
@@ -194,7 +195,7 @@ static void opcode_call(void)
         GState->logical_pc = (uint32) (routine - GState->story);
         const uint8 numlocals = *(routine++);
         if (numlocals > 15)
-            die("Routine has too many local variables (%u)", numlocals);
+            GState->die("Routine has too many local variables (%u)", numlocals);
 
         FIXME("check for stack overflow here");
 
@@ -242,7 +243,7 @@ static void doReturn(const uint16 val)
 {
     FIXME("newer versions start in a real routine, but still aren't allowed to return from it.");
     if (GState->bp == 0)
-        die("Stack underflow in return operation");
+        GState->die("Stack underflow in return operation");
 
     dbg("popping stack for return\n");
     dbg("returning: initial pc=%X, bp=%u, sp=%u\n", (unsigned int) (GState->pc-GState->story), (unsigned int) GState->bp, (unsigned int) (GState->sp-GState->stack));
@@ -392,7 +393,7 @@ static void opcode_div(void)
 {
     uint8 *store = varAddress(*(GState->pc++), 1);
     if (GState->operands[1] == 0)
-        die("Division by zero");
+        GState->die("Division by zero");
     const uint16 result = (uint16) (((sint16) GState->operands[0]) / ((sint16) GState->operands[1]));
     WRITEUI16(store, result);
 } // opcode_div
@@ -401,7 +402,7 @@ static void opcode_mod(void)
 {
     uint8 *store = varAddress(*(GState->pc++), 1);
     if (GState->operands[1] == 0)
-        die("Division by zero");
+        GState->die("Division by zero");
     const uint16 result = (uint16) (((sint16) GState->operands[0]) % ((sint16) GState->operands[1]));
     WRITEUI16(store, result);
 } // opcode_div
@@ -525,10 +526,10 @@ static void opcode_store(void)
 static uint8 *getObjectPtr(const uint16 objid)
 {
     if (objid == 0)
-        die("Object id #0 referenced");
+        GState->die("Object id #0 referenced");
 
     if ((GState->header.version <= 3) && (objid > 255))
-        die("Invalid object id referenced");
+        GState->die("Invalid object id referenced");
 
     uint8 *ptr = GState->story + GState->header.objtab_addr;
     ptr += 31 * sizeof (uint16);  // skip properties defaults table
@@ -549,7 +550,7 @@ static void opcode_test_attr(void)
     } // if
     else
     {
-        die("write me");
+        GState->die("write me");
     } // else
 } // opcode_test_attr
 
@@ -566,7 +567,7 @@ static void opcode_set_attr(void)
     } // if
     else
     {
-        die("write me");
+        GState->die("write me");
     } // else
 } // opcode_set_attr
 
@@ -583,7 +584,7 @@ static void opcode_clear_attr(void)
     } // if
     else
     {
-        die("write me");
+        GState->die("write me");
     } // else
 } // opcode_clear_attr
 
@@ -597,7 +598,7 @@ static uint8 *getObjectPtrParent(uint8 *objptr)
     }
     else
     {
-        die("write me");
+        GState->die("write me");
     } // else
 } // getGetObjectPtrParent
 
@@ -633,7 +634,7 @@ static void opcode_insert_obj(void)
     } // if
     else
     {
-        die("write me");  // fields are different in ver4+.
+        GState->die("write me");  // fields are different in ver4+.
     } // else
 } // opcode_insert_obj
 
@@ -643,7 +644,7 @@ static void opcode_remove_obj(void)
     uint8 *objptr = getObjectPtr(objid);
 
     if (GState->header.version > 3)
-        die("write me");  // fields are different in ver4+.
+        GState->die("write me");  // fields are different in ver4+.
     else
     {
         unparentObject(objid);  // take object out of its original tree first.
@@ -686,7 +687,7 @@ static uint8 *getObjectProperty(const uint16 objid, const uint32 propid, uint8 *
     } // if
     else
     {
-        die("write me");
+        GState->die("write me");
     } // else
 
     return NULL;
@@ -701,7 +702,7 @@ static void opcode_put_prop(void)
     uint8 *ptr = getObjectProperty(objid, propid, &size);
 
     if (!ptr)
-        die("Lookup on missing object property (obj=%X, prop=%X)", (unsigned int) objid, (unsigned int) propid);
+        GState->die("Lookup on missing object property (obj=%X, prop=%X)", (unsigned int) objid, (unsigned int) propid);
     else if (size == 1)
         *ptr = (value & 0xFF);
     else
@@ -771,7 +772,7 @@ static void opcode_get_prop_len(void)
     } // if
     else
     {
-        die("write me");
+        GState->die("write me");
     } // else
 
     WRITEUI16(store, result);
@@ -787,11 +788,11 @@ static void opcode_get_next_prop(void)
     uint8 *ptr = getObjectProperty(objid, firstProp ? 0xFFFFFFFF : GState->operands[1], &size);
 
     if (!ptr)
-        die("get_next_prop on missing property obj=%X, prop=%X", (unsigned int) objid, (unsigned int) GState->operands[1]);
+        GState->die("get_next_prop on missing property obj=%X, prop=%X", (unsigned int) objid, (unsigned int) GState->operands[1]);
     else if (GState->header.version <= 3)
         result = ptr[firstProp ? -1 : ((sint8) size)] & 0x1F;  // 5 bits for the prop id.
     else
-        die("write me");
+        GState->die("write me");
 
     WRITEUI16(store, result);
 } // opcode_get_next_prop
@@ -805,7 +806,7 @@ static void opcode_jin(void)
     if (GState->header.version <= 3)
         doBranch((((uint16) objptr[4]) == parentid) ? 1 : 0);
     else
-        die("write me");  // fields are different in ver4+.
+        GState->die("write me");  // fields are different in ver4+.
 } // opcode_jin
 
 static uint16 getObjectRelationship(const uint16 objid, const uint8 relationship)
@@ -815,7 +816,7 @@ static uint16 getObjectRelationship(const uint16 objid, const uint8 relationship
     if (GState->header.version <= 3)
         return objptr[relationship];
     else
-        die("write me");  // fields are different in ver4+.
+        GState->die("write me");  // fields are different in ver4+.
 } // getObjectRelationship
 
 static void opcode_get_parent(void)
@@ -843,8 +844,7 @@ static void opcode_get_child(void)
 
 static void opcode_new_line(void)
 {
-    putchar('\n');
-    fflush(stdout);
+    GState->writechar('\n');
 } // opcode_new_line
 
 static void print_zscii_char(const uint16 val)
@@ -866,7 +866,7 @@ static void print_zscii_char(const uint16 val)
         ch = '?';  // this is illegal, but we'll be nice.
 
     if (ch)
-        putchar(ch);
+        GState->writechar(ch);
 } // print_zscii_char
 
 static uintptr print_zscii(const uint8 *_str, const int abbr)
@@ -911,7 +911,7 @@ static uintptr print_zscii(const uint8 *_str, const int abbr)
             else if (useAbbrTable)
             {
                 if (abbr)
-                    die("Abbreviation strings can't use abbreviations");
+                    GState->die("Abbreviation strings can't use abbreviations");
                 //FIXME("Make sure offset is sane");
                 const uintptr index = ((32 * (((uintptr) useAbbrTable) - 1)) + (uintptr) ch);
                 const uint8 *ptr = (GState->story + GState->header.abbrtab_addr) + (index * sizeof (uint16));
@@ -938,7 +938,7 @@ static uintptr print_zscii(const uint8 *_str, const int abbr)
                 case 2:
                 case 3:
                     if (GState->header.version <= 2)
-                        die("write me: handle ver1/2 alphabet shifting");
+                        GState->die("write me: handle ver1/2 alphabet shifting");
                     else
                         useAbbrTable = ch;
                     break;
@@ -946,7 +946,7 @@ static uintptr print_zscii(const uint8 *_str, const int abbr)
                 case 4:
                 case 5:
                     if (GState->header.version <= 2)
-                        die("write me: handle ver1/2 alphabet shift locking");
+                        GState->die("write me: handle ver1/2 alphabet shift locking");
                     else
                     {
                         newshift = 1;
@@ -963,7 +963,7 @@ static uintptr print_zscii(const uint8 *_str, const int abbr)
             } // switch
 
             if (printVal)
-                putchar(printVal);
+                GState->writechar(printVal);
 
             if (alphabet && !newshift)
                 alphabet = 0;
@@ -982,7 +982,10 @@ static void opcode_print(void)
 
 static void opcode_print_num(void)
 {
-    printf("%d", (int) GState->operands[0]);
+    char buf[32];
+    snprintf(buf, sizeof (buf), "%d", (int) GState->operands[0]);
+    for (const char *ptr = buf; *ptr; ptr++)
+        GState->writechar(*ptr);
 } // opcode_print_num
 
 static void opcode_print_char(void)
@@ -993,8 +996,7 @@ static void opcode_print_char(void)
 static void opcode_print_ret(void)
 {
     GState->pc += print_zscii(GState->pc, 0);
-    putchar('\n');
-    fflush(stdout);
+    GState->writechar('\n');
     doReturn(1);
 } // opcode_print_ret
 
@@ -1010,7 +1012,7 @@ static void opcode_print_obj(void)
     } // if
     else
     {
-        die("write me");
+        GState->die("write me");
     } // else
 } // opcode_print_obj
 
@@ -1058,7 +1060,7 @@ static uint16 toZscii(const uint8 ch)
     else if ((ch >= 'A') && (ch <= 'Z'))
         return (ch - 'A') + 6;
     else
-        die("write me");
+        GState->die("write me");
     return 0;
 } // toZscii
 
@@ -1067,124 +1069,12 @@ static void opcode_show_status(void)
     FIXME("redraw the status bar here");
 } // opcode_show_status
 
-static void opcode_read(void)
+static void tokenizeUserInput(void)
 {
-    static char *script = NULL;
-
-    dbg("read from input stream: text-buffer=%X parse-buffer=%X\n", (unsigned int) GState->operands[0], (unsigned int) GState->operands[1]);
-
-    uint8 *input = GState->story + GState->operands[0];
+    const uint8 *input = GState->story + GState->operands[0];
     const uint8 inputlen = *(input++);
-    dbg("max input: %u\n", (unsigned int) inputlen);
-    if (inputlen < 3)
-        die("text buffer is too small for reading");  // happens on buffer overflow.
-
     uint8 *parse = GState->story + GState->operands[1];
     const uint8 parselen = *(parse++);
-    parse++;  // skip over where we will write the final token count.
-
-    dbg("max parse: %u\n", (unsigned int) parselen);
-    if (parselen < 4)
-        die("parse buffer is too small for reading");  // happens on buffer overflow.
-
-    if (GState->startup_script != NULL)
-    {
-        snprintf((char *) input, inputlen-1, "#script %s\n", GState->startup_script);
-        input[inputlen-1] = '\0';
-        GState->startup_script = NULL;
-        printf("%s", (const char *) input);
-    } // if
-
-    else if (script == NULL)
-    {
-        opcode_show_status();
-        FIXME("fgets isn't really the right solution here.");
-        if (!fgets((char *) input, inputlen, stdin))
-            die("EOF or error on stdin during read");
-    } // else if
-
-    else
-    {
-        uint8 i;
-        char *scriptptr = script;
-        for (i = 0; i < inputlen; i++, scriptptr++)
-        {
-            const char ch = *scriptptr;
-            if (ch == '\0')
-                break;
-            else if (ch == '\n')
-            {
-                scriptptr++;
-                break;
-            } // else if
-            else if (ch == '\r')
-            {
-                i--;
-                continue;
-            } // else if
-            else
-            {
-                input[i] = (uint8) ch;
-            } // else
-        } // for
-        input[i] = '\0';
-
-        printf("%s\n", input);
-
-        memmove(script, scriptptr, strlen(scriptptr) + 1);
-        if (script[0] == '\0')
-        {
-            printf("*** Done running script.\n");
-            free(script);
-            script = NULL;
-        } // if
-    } // else
-
-    dbg("input string from user is '%s'\n", (const char *) input);
-    {
-        char *ptr;
-        for (ptr = (char *) input; *ptr; ptr++)
-        {
-            if ((*ptr >= 'A') && (*ptr <= 'Z'))
-                *ptr -= 'A' - 'a';  // make it lowercase.
-            else if ((*ptr == '\n') || (*ptr == '\r'))
-            {
-                *ptr = '\0';
-                break;
-            } // if
-        } // for
-    }
-
-    if (strncmp((const char *) input, "#script ", 8) == 0)
-    {
-        if (script != NULL)
-            die("FIXME: Can't nest scripts at the moment");
-
-        const char *fname = (const char *) (input + 8);
-        long len = 0;
-        FILE *io = NULL;
-        if ((io = fopen(fname, "rb")) == NULL)
-            die("Failed to open '%s'", fname);
-        else if ((fseek(io, 0, SEEK_END) == -1) || ((len = ftell(io)) == -1))
-            die("Failed to determine size of '%s'", fname);
-        else if ((script = malloc(len)) == NULL)
-            die("Out of memory");
-        else if ((fseek(io, 0, SEEK_SET) == -1) || (fread(script, len, 1, io) != 1))
-            die("Failed to read '%s'", fname);
-        fclose(io);
-        printf("*** Running script '%s'...\n", fname);
-        opcode_read();  // start over.
-        return;
-    } // if
-
-    else if (strncmp((const char *) input, "#random ", 8) == 0)
-    {
-        const uint16 val = doRandom((sint16) atoi((const char *) (input+8)));
-        printf("*** random replied: %u\n", (unsigned int) val);
-        opcode_read();  // go again.
-        return;
-    } // else if
-
     const uint8 *seps = GState->story + GState->header.dict_addr;
     const uint8 numseps = *(seps++);
     const uint8 *dict = seps + numseps;
@@ -1192,8 +1082,10 @@ static void opcode_read(void)
     const uint16 numentries = READUI16(dict);
     uint8 numtoks = 0;
 
-    uint8 *strstart = input;
-    uint8 *ptr = (uint8 *) input;
+    parse++;  // skip over where we will write the final token count.
+
+    const uint8 *strstart = input;
+    const uint8 *ptr = (const uint8 *) input;
     while (1)
     {
         int isSep = 0;
@@ -1294,6 +1186,126 @@ static void opcode_read(void)
     dbg("Tokenized %u tokens\n", (unsigned int) numtoks);
 
     *(GState->story + GState->operands[1] + 1) = numtoks;
+}
+
+static void opcode_read(void)
+{
+    static char *script = NULL;
+
+    dbg("read from input stream: text-buffer=%X parse-buffer=%X\n", (unsigned int) GState->operands[0], (unsigned int) GState->operands[1]);
+
+    uint8 *input = GState->story + GState->operands[0];
+    const uint8 inputlen = *(input++);
+    dbg("max input: %u\n", (unsigned int) inputlen);
+    if (inputlen < 3)
+        GState->die("text buffer is too small for reading");  // happens on buffer overflow.
+
+    const uint8 *parse = GState->story + GState->operands[1];
+    const uint8 parselen = *(parse++);
+
+    dbg("max parse: %u\n", (unsigned int) parselen);
+    if (parselen < 4)
+        GState->die("parse buffer is too small for reading");  // happens on buffer overflow.
+
+    if (GState->startup_script != NULL)
+    {
+        snprintf((char *) input, inputlen-1, "#script %s\n", GState->startup_script);
+        input[inputlen-1] = '\0';
+        GState->startup_script = NULL;
+        printf("%s", (const char *) input);
+    } // if
+
+    else if (script == NULL)
+    {
+        opcode_show_status();
+        FIXME("fgets isn't really the right solution here.");
+        if (!fgets((char *) input, inputlen, stdin))
+            GState->die("EOF or error on stdin during read");
+    } // else if
+
+    else
+    {
+        uint8 i;
+        char *scriptptr = script;
+        for (i = 0; i < inputlen; i++, scriptptr++)
+        {
+            const char ch = *scriptptr;
+            if (ch == '\0')
+                break;
+            else if (ch == '\n')
+            {
+                scriptptr++;
+                break;
+            } // else if
+            else if (ch == '\r')
+            {
+                i--;
+                continue;
+            } // else if
+            else
+            {
+                input[i] = (uint8) ch;
+            } // else
+        } // for
+        input[i] = '\0';
+
+        printf("%s\n", input);
+
+        memmove(script, scriptptr, strlen(scriptptr) + 1);
+        if (script[0] == '\0')
+        {
+            printf("*** Done running script.\n");
+            free(script);
+            script = NULL;
+        } // if
+    } // else
+
+    dbg("input string from user is '%s'\n", (const char *) input);
+    {
+        char *ptr;
+        for (ptr = (char *) input; *ptr; ptr++)
+        {
+            if ((*ptr >= 'A') && (*ptr <= 'Z'))
+                *ptr -= 'A' - 'a';  // make it lowercase.
+            else if ((*ptr == '\n') || (*ptr == '\r'))
+            {
+                *ptr = '\0';
+                break;
+            } // if
+        } // for
+    }
+
+    if (strncmp((const char *) input, "#script ", 8) == 0)
+    {
+        if (script != NULL)
+            GState->die("FIXME: Can't nest scripts at the moment");
+
+        const char *fname = (const char *) (input + 8);
+        long len = 0;
+        FILE *io = NULL;
+        if ((io = fopen(fname, "rb")) == NULL)
+            GState->die("Failed to open '%s'", fname);
+        else if ((fseek(io, 0, SEEK_END) == -1) || ((len = ftell(io)) == -1))
+            GState->die("Failed to determine size of '%s'", fname);
+        else if ((script = malloc(len)) == NULL)
+            GState->die("Out of memory");
+        else if ((fseek(io, 0, SEEK_SET) == -1) || (fread(script, len, 1, io) != 1))
+            GState->die("Failed to read '%s'", fname);
+        fclose(io);
+        printf("*** Running script '%s'...\n", fname);
+        opcode_read();  // start over.
+        return;
+    } // if
+
+    else if (strncmp((const char *) input, "#random ", 8) == 0)
+    {
+        const uint16 val = doRandom((sint16) atoi((const char *) (input+8)));
+        printf("*** random replied: %u\n", (unsigned int) val);
+        opcode_read();  // go again.
+        return;
+    } // else if
+
+    tokenizeUserInput();
 } // opcode_read
 
 static void opcode_verify(void)
@@ -1307,6 +1319,7 @@ static void opcode_verify(void)
 
     doBranch((((uint16) (checksum % 0x10000)) == GState->header.story_checksum) ? 1 : 0);
 } // opcode_verify
+
 
 static void loadStory(const char *fname);
 
@@ -1353,7 +1366,7 @@ static void opcode_restore(void)
         fclose(io);
 
     if (!okay)
-        die("Failed to restore.");
+        GState->die("Failed to restore.");
 
     doBranch(okay ? 1 : 0);
 } // opcode_restore
@@ -1367,20 +1380,6 @@ static void opcode_nop(void)
 {
     // that's all, folks.
 } // opcode_nop
-
-typedef struct
-{
-    const char *name;
-    OpcodeFn fn;
-} Opcode;
-
-// this is kinda wasteful (we could pack the 89 opcodes in their various forms
-//  into separate arrays and strip off the metadata bits) but it simplifies
-//  some things to just have a big linear array.
-static Opcode GOpcodes[256];
-
-// The extended ones, however, only have one form, so we pack that tight.
-static Opcode GExtendedOpcodes[30];
 
 
 static int parseOperand(const uint8 optype, uint16 *operand)
@@ -1431,10 +1430,10 @@ static void runInstruction(void)
     if (extended)
     {
         opcode = *(GState->pc++);
-        if (opcode >= (sizeof (GExtendedOpcodes) / sizeof (GExtendedOpcodes[0])))
-            die("Unsupported or unknown extended opcode #%u", (unsigned int) opcode);
+        if (opcode >= (sizeof (GState->extended_opcodes) / sizeof (GState->extended_opcodes[0])))
+            GState->die("Unsupported or unknown extended opcode #%u", (unsigned int) opcode);
         GState->operand_count = parseVarOperands(GState->operands);
-        op = &GExtendedOpcodes[opcode];
+        op = &GState->extended_opcodes[opcode];
     } // if
     else
     {
@@ -1470,15 +1469,16 @@ static void runInstruction(void)
             } // else
         } // else
 
-        op = &GOpcodes[opcode];
+        op = &GState->opcodes[opcode];
     } // if
 
     if (!op->name)
-        die("Unsupported or unknown %sopcode #%u", extended ? "extended " : "", (unsigned int) opcode);
+        GState->die("Unsupported or unknown %sopcode #%u", extended ? "extended " : "", (unsigned int) opcode);
     else if (!op->fn)
-        die("Unimplemented %sopcode #%d ('%s')", extended ? "extended " : "", (unsigned int) opcode, op->name);
+        GState->die("Unimplemented %sopcode #%d ('%s')", extended ? "extended " : "", (unsigned int) opcode, op->name);
     else
     {
+        #if MOJOZORK_DEBUGGING
         dbg("pc=%X %sopcode=%u ('%s') [", (unsigned int) GState->logical_pc, extended ? "ext " : "", opcode, op->name);
         if (GState->operand_count)
         {
@@ -1488,6 +1488,8 @@ static void runInstruction(void)
             dbg("%X", (unsigned int) GState->operands[i]);
         } // if
         dbg("]\n");
+        #endif
+
         op->fn();
         GState->instructions_run++;
     } // else
@@ -1536,14 +1538,14 @@ static void initAlphabetTable(void)
     *(ptr++) = ')';
 } // initAlphabetTable
 
-static void initOpcodeTable(void)
+static void inititialOpcodeTableSetup(void)
 {
     FIXME("lots of missing instructions here.  :)");
 
-    memset(GOpcodes, '\0', sizeof (GOpcodes));
-    memset(GExtendedOpcodes, '\0', sizeof (GExtendedOpcodes));
+    memset(GState->opcodes, '\0', sizeof (GState->opcodes));
+    memset(GState->extended_opcodes, '\0', sizeof (GState->extended_opcodes));
 
-    Opcode *opcodes = GOpcodes;
+    Opcode *opcodes = GState->opcodes;
 
     #define OPCODE(num, opname) opcodes[num].name = #opname; opcodes[num].fn = opcode_##opname
     #define OPCODE_WRITEME(num, opname) opcodes[num].name = #opname
@@ -1687,7 +1689,7 @@ static void initOpcodeTable(void)
     opcodes[190].name = "extended";
 
     // extended opcodes in ver5+ ...
-    opcodes = GExtendedOpcodes;
+    opcodes = GState->extended_opcodes;
     OPCODE_WRITEME(0, save_ext);
     OPCODE_WRITEME(1, restore_ext);
     OPCODE_WRITEME(2, log_shift);
@@ -1698,7 +1700,7 @@ static void initOpcodeTable(void)
     OPCODE_WRITEME(11, print_unicode);
     OPCODE_WRITEME(12, check_unicode);
     OPCODE_WRITEME(13, set_true_colour);
-    opcodes = GOpcodes;
+    opcodes = GState->opcodes;
 
     if (GState->header.version < 6)
         return;  // we're done.
@@ -1712,7 +1714,7 @@ static void initOpcodeTable(void)
     OPCODE_WRITEME(243, output_stream_ver6);
     OPCODE_WRITEME(248, not_ver6);
 
-    opcodes = GExtendedOpcodes;
+    opcodes = GState->extended_opcodes;
     OPCODE_WRITEME(4, set_font_ver6);
     OPCODE_WRITEME(5, draw_picture);
     OPCODE_WRITEME(6, picture_data);
@@ -1734,22 +1736,25 @@ static void initOpcodeTable(void)
     OPCODE_WRITEME(27, make_menu);
     OPCODE_WRITEME(28, picture_table);
     OPCODE_WRITEME(29, buffer_screen);
-    opcodes = GOpcodes;
 
     #undef OPCODE
     #undef OPCODE_WRITEME
+}
+
+static void initOpcodeTable(void)
+{
+    inititialOpcodeTableSetup();
+
+    // finalize the opcode table...
+    Opcode *opcodes = GState->opcodes;
+    for (uint8 i = 32; i <= 127; i++)  // 2OP opcodes repeating with different operand forms.
+        opcodes[i] = opcodes[i % 32];
+    for (uint8 i = 144; i <= 175; i++)  // 1OP opcodes repeating with different operand forms.
+        opcodes[i] = opcodes[128 + (i % 16)];
+    for (uint8 i = 192; i <= 223; i++)  // 2OP opcodes repeating with VAR operand forms.
+        opcodes[i] = opcodes[i % 32];
 } // initOpcodeTable
 
-static void finalizeOpcodeTable(void)
-{
-    uint8 i;
-    for (i = 32; i <= 127; i++)  // 2OP opcodes repeating with different operand forms.
-        GOpcodes[i] = GOpcodes[i % 32];
-    for (i = 144; i <= 175; i++)  // 1OP opcodes repeating with different operand forms.
-        GOpcodes[i] = GOpcodes[128 + (i % 16)];
-    for (i = 192; i <= 223; i++)  // 2OP opcodes repeating with VAR operand forms.
-        GOpcodes[i] = GOpcodes[i % 32];
-} // finalizeOpcodeTable
 
 // WE OWN THIS copy of story, which we will free() later. Caller should not free it!
 static void initStory(const char *fname, uint8 *story, const uint32 storylen)
@@ -1763,7 +1768,7 @@ static void initStory(const char *fname, uint8 *story, const uint32 storylen)
     free(GState->story_filename);
     GState->story = story;
     GState->story_len = (uintptr) storylen;
-    GState->story_filename = strdup(fname);
+    GState->story_filename = fname ? strdup(fname) : NULL;
     GState->instructions_run = 0;
     GState->pc = 0;
     GState->logical_pc = 0;
@@ -1817,14 +1822,14 @@ static void initStory(const char *fname, uint8 *story, const uint32 storylen)
     dbg(" - story checksum 0x%X\n", (unsigned int) GState->header.story_checksum);
 
     if (GState->header.version != 3)
-        die("FIXME: only version 3 is supported right now, this is %d", (int) GState->header.version);
+        GState->die("FIXME: only version 3 is supported right now, this is %d", (int) GState->header.version);
 
     initAlphabetTable();
     initOpcodeTable();
-    finalizeOpcodeTable();
 
     FIXME("in ver6+, this is the address of a main() routine, not a raw instruction address.");
     GState->pc = GState->story + GState->header.pc_start;
+    GState->logical_pc = (uint32) GState->header.pc_start;
     GState->bp = 0;
     GState->sp = GState->stack;
 }
@@ -1836,20 +1841,53 @@ static void loadStory(const char *fname)
     long len;
 
     if (!fname)
-        die("USAGE: mojozork <story_file>");
+        GState->die("USAGE: mojozork <story_file>");
     else if ((io = fopen(fname, "rb")) == NULL)
-        die("Failed to open '%s'", fname);
+        GState->die("Failed to open '%s'", fname);
     else if ((fseek(io, 0, SEEK_END) == -1) || ((len = ftell(io)) == -1))
-        die("Failed to determine size of '%s'", fname);
+        GState->die("Failed to determine size of '%s'", fname);
     else if ((story = (uint8 *) malloc(len)) == NULL)
-        die("Out of memory");
+        GState->die("Out of memory");
     else if ((fseek(io, 0, SEEK_SET) == -1) || (fread(story, len, 1, io) != 1))
-        die("Failed to read '%s'", fname);
+        GState->die("Failed to read '%s'", fname);
 
     fclose(io);
 
     initStory(fname, story, (uint32) len);
 } // loadStory
+
+
+#ifndef MULTIZORK
+
+#ifdef _MSC_VER
+__declspec(noreturn) static void die(const char *fmt, ...);
+#elif defined(__GNUC__) || defined(__clang__)
+static void die(const char *fmt, ...) __attribute__((noreturn));
+#endif
+
+static void die(const char *fmt, ...)
+{
+    va_list ap;
+
+    fprintf(stderr, "\nERROR: ");
+    va_start(ap, fmt);
+    vfprintf(stderr, fmt, ap);
+    va_end(ap);
+    fprintf(stderr, " (pc=%X)\n", (unsigned int) GState->logical_pc);
+    fprintf(stderr, " %u instructions run\n", (unsigned int) GState->instructions_run);
+    fprintf(stderr, "\n");
+    fflush(stderr);
+    fflush(stdout);
+
+    exit(1);
+} // die
+
+static void putchar_wrapper(const int ch)
+{
+    putchar(ch);
+    if (ch == '\n')
+        fflush(stdout);
+}
 
 int main(int argc, char **argv)
 {
@@ -1858,6 +1896,8 @@ int main(int argc, char **argv)
 
     GState = &zmachine_state;
     GState->startup_script = (argc >= 3) ? argv[2] : NULL;
+    GState->die = die;
+    GState->writechar = putchar_wrapper;
 
     srandom((unsigned long) time(NULL));
 
@@ -1873,5 +1913,7 @@ int main(int argc, char **argv)
 
     return 0;
 } // main
+
+#endif
 
 // end of mojozork.c ...
