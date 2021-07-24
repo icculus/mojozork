@@ -1072,7 +1072,6 @@ static void opcode_show_status(void)
 static void tokenizeUserInput(void)
 {
     const uint8 *input = GState->story + GState->operands[0];
-    const uint8 inputlen = *(input++);
     uint8 *parse = GState->story + GState->operands[1];
     const uint8 parselen = *(parse++);
     const uint8 *seps = GState->story + GState->header.dict_addr;

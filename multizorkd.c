@@ -262,29 +262,22 @@ static void opcode_read_multizork(void)
 
 static void opcode_save_multizork(void)
 {
-    Instance *inst = (Instance *) GState;  // this works because zmachine_state is the first field in Instance.
-    Player *player = get_current_player(inst);
     GState->die("SAVE opcode executed despite our best efforts. Should not have happened!");
 }
 
 static void opcode_restore_multizork(void)
 {
-    Instance *inst = (Instance *) GState;  // this works because zmachine_state is the first field in Instance.
-    Player *player = get_current_player(inst);
     GState->die("RESTORE opcode executed despite our best efforts. Should not have happened!");
 }
 
 static void opcode_restart_multizork(void)
 {
-    Instance *inst = (Instance *) GState;  // this works because zmachine_state is the first field in Instance.
-    Player *player = get_current_player(inst);
     GState->die("RESTART opcode executed despite our best efforts. Should not have happened!");
 }
 
 static void opcode_quit_multizork(void)
 {
     Instance *inst = (Instance *) GState;  // this works because zmachine_state is the first field in Instance.
-    Player *player = get_current_player(inst);
     // !!! FIXME: decide if this was an expected endgame and die() as an error if not?
     GState->quit = 1;  // note that this should terminate the Z-Machine.
     inst->step_completed = 1;  // time to break out of the Z-Machine simulation loop.

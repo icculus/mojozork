@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.0.0)
 add_executable(mojozork mojozork.c)
 
 if(NOT MSVC)  # the daemon is pretty Unixy.
+    add_definitions(-Wall)
     add_executable(multizorkd multizorkd.c)
 endif()
 
