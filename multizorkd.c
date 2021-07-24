@@ -180,7 +180,7 @@ static void drop_connection(Connection *conn)
     int players_still_connected = 0;
     if (inst != NULL) {
         char msg[128];
-        snprintf(msg, sizeof (msg), "\n\n*** %s has disconnected. If they come back, we'll let you know. ***\n\n\n> ", conn->username);
+        snprintf(msg, sizeof (msg), "\n\n*** %s has disconnected. If they come back, we'll let you know. ***\n\n\n>", conn->username);
         for (size_t i = 0; i < ARRAYSIZE(inst->players); i++) {
             Connection *c = inst->players[i].connection;
             if (c == conn) {
@@ -662,7 +662,7 @@ static void inpfn_enter_instance_code_to_join(Connection *conn, const char *str)
                 if (c != conn) {
                     write_to_connection(c, "\n*** ");
                     write_to_connection(c, conn->username);
-                    write_to_connection(c, " has joined this game! ***\n> ");
+                    write_to_connection(c, " has joined this game! ***\n>");
                 }
             }
 
@@ -783,7 +783,7 @@ static void process_connection_command(Connection *conn)
     conn->inputfn(conn, conn->inputbuf);
     if (conn->state == CONNSTATE_READY) {
         if (conn->inputfn != inpfn_ingame) {  // if in-game, the Z-Machine writes a prompt itself.
-            write_to_connection(conn, "\n> ");  // prompt.
+            write_to_connection(conn, "\n>");  // prompt.
         }
     }
 }
@@ -830,7 +830,7 @@ static void recv_from_connection(Connection *conn)
         } else if (ch == '\n') {
             if (conn->overlong_input) {
                 loginfo("Overlong input from socket %d", conn->sock);
-                write_to_connection(conn, "Whoa, you're typing too much. Shorter commands, please.\n\n> ");
+                write_to_connection(conn, "Whoa, you're typing too much. Shorter commands, please.\n\n>");
             } else {
                 process_connection_command(conn);
             }
@@ -936,7 +936,7 @@ static int accept_new_connection(const int listensock)
 
     loginfo("New connection from %s (socket %d)", conn->address, sock);
 
-    write_to_connection(conn, "\n\nHello sailor!\n\nIf you are returning, go ahead and type in your access code.\nOtherwise, just press enter.\n\n> ");
+    write_to_connection(conn, "\n\nHello sailor!\n\nIf you are returning, go ahead and type in your access code.\nOtherwise, just press enter.\n\n>");
 
     return sock;
 }
