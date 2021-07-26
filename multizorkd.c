@@ -407,6 +407,14 @@ static int step_instance(Instance *inst, const int playernum, const char *input)
         while (!inst->step_completed) {
             runInstruction();
         }
+
+        // save off Z-Machine state for next time.
+        player->next_logical_pc = GState->logical_pc;
+        player->next_logical_sp = (uint32) (GState->sp - GState->stack);
+        player->next_logical_bp = GState->bp;
+        assert(player->next_logical_sp < ARRAYSIZE(player->stack));
+        memcpy(player->stack, GState->stack, player->next_logical_sp * 2);
+
         if (inst->zmachine_state.quit) {
             // we've hit a QUIT opcode, which means, at least for Zork 1, that the user
             //  has either beaten the game or died in an unrecoverable way.
@@ -415,13 +423,6 @@ static int step_instance(Instance *inst, const int playernum, const char *input)
             inst->zmachine_state.quit = 0;  // reset for next player.
             drop_connection(player->connection);
         }
-
-        // save off Z-Machine state for next time.
-        player->next_logical_pc = GState->logical_pc;
-        player->next_logical_sp = (uint32) (GState->sp - GState->stack);
-        player->next_logical_bp = GState->bp;
-        assert(player->next_logical_sp < ARRAYSIZE(player->stack));
-        memcpy(player->stack, GState->stack, player->next_logical_sp * 2);
     } else {
         // uhoh, the Z-machine called die(). Kill this instance.
         broadcast_to_instance(inst, "\n\n*** Oh no, this game instance had a fatal error, so we're jumping ship! ***\n\n\n");
