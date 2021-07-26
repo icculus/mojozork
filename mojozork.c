@@ -1081,6 +1081,7 @@ static void tokenizeUserInput(void)
     const uint16 numentries = READUI16(dict);
     uint8 numtoks = 0;
 
+    input++;  // skip over inputlen byte; we checked this and capped input elsewhere.
     parse++;  // skip over where we will write the final token count.
 
     const uint8 *strstart = input;
