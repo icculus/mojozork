@@ -108,6 +108,9 @@ typedef struct Player
     uint8 *next_inputbuf;   // where to write the next input for this player.
     uint8 next_inputbuflen;
     uint16 next_operands[2];  // to save off the READ operands for later.
+    uint8 object_table_data[9];
+    uint8 property_table_data[32];  // ZORK 1 SPECIFIC MAGIC: other games (or longer player names) might need more.
+    uint16 gvar_location;
 } Player;
 
 typedef struct Instance
@@ -216,14 +219,152 @@ static Player *get_current_player(Instance *inst)
 
 // MojoZork Z-Machine overrides...
 
-// When we hit a READ instruction in the Z-Machine, we assume we're back at the
-//  prompt waiting for the user to type their next move. At this point we stop
-//  the simulation, dump any accumulated output to the user, reset the move count
-//  and let the next user's move execute, until each player had their turn, then
-//  the move count increments and we wait for more input from the users.
+// ZORK 1 SPECIFIC MAGIC:
+// Z-Machine version 3 (what Zork 1 uses) refers to objects by an 8-bit index,
+//  with 0 being a "null" object, so you can address 255 objects. Zork 1
+//  uses 250, so we have slots for adding players, but the object table has
+//  space for _exactly_ 250 objects, with the property data starting in the
+//  next byte. Since the object table is in dynamic memory, generally we
+//  can't just move things around and it's legal for a Z-Machine program to
+//  edit the object table directly by poking dynamic memory if it wants.
+//  Fortunately, Zork 1 doesn't do this; it only uses the official opcodes
+//  to access the object table. This means we don't have to override _any_
+//  opcodes to add these extra objects, we just need to provid our own
+//  implementation of MojoZork's getObjectPtr(), which all of those opcodes
+//  already use to do their work. If we get a request for an object > 250,
+//  we provide it a pointer to data we've set up outside the Z-Machine memory
+//  map, where those extra objects live. Other games will use more objects
+//  or perhaps touch the object table in dynamic memory directly, or just
+//  touch dynamic memory above the object table, period, and that may need
+//  way more tapdancing.
 //
-// In this sense, READ is the entry point to the Z-Machine, as we stop when hit
-//  this instruction and then run again until the next READ.
+// ZORK 1 SPECIFIC MAGIC:
+//  Rather than copy players objects around for each step_instance, we also
+//  just provide the current player's pointer whenever the Z-Machine requests
+//  object #4 ("cretin", the player). Other games might use a different index
+//  for the player.
+#define ZORK1_PLAYER_OBJID 4  // ZORK 1 SPECIFIC MAGIC
+#define ZORK1_EXTERN_MEM_OBJS_BASE 251  // ZORK 1 SPECIFIC MAGIC
+static uint8 *getObjectPtr(const uint16 _objid)
+{
+    uint16 objid = _objid;  // unconst it.
+    if (objid == 0) {
+        GState->die("Object id #0 referenced");
+    } else if ((GState->header.version <= 3) && (objid > 255)) {
+        GState->die("Invalid object id referenced");
+    }
+
+    Instance *inst = (Instance *) GState;  // this works because zmachine_state is the first field in Instance.
+    const uint16 external_mem_objects_base = ZORK1_EXTERN_MEM_OBJS_BASE;  // ZORK 1 SPECIFIC MAGIC
+    if (objid == ZORK1_PLAYER_OBJID) {  // ZORK 1 SPECIFIC MAGIC
+        objid = external_mem_objects_base + inst->current_player; // looking for the current player, redirect.
+    }
+
+    uint8 *ptr;
+    if (objid >= external_mem_objects_base) {  // looking for a multiplayer character
+        const int requested_player = (int) (objid - external_mem_objects_base);
+        if (requested_player >= inst->num_players) {
+            GState->die("Invalid multiplayer object id referenced");
+        }
+        ptr = inst->players[requested_player].object_table_data;
+    } else {  // looking for a standard object.
+        ptr = GState->story + GState->header.objtab_addr;
+        ptr += 31 * sizeof (uint16);  // skip properties defaults table
+        ptr += 9 * (objid-1);  // find object in object table
+    }
+    return ptr;
+}
+
+// See notes on getObjectPointer(); we need to provide external memory for the multiplayer object property tables, too.
+// There _does_ seem to be some zero'd out space between the global variables and the Grammar Pointer Table, but
+// I might be wrong, and keeping this external lets us just wipe out all of dynamic memory to step the game identically
+// for all players on startup.
+static uint8 *getObjectProperty(const uint16 _objid, const uint32 propid, uint8 *_size)
+{
+    uint16 objid = _objid;  // unconst it.
+    uint8 *ptr;
+    if (GState->header.version <= 3) {
+        Instance *inst = (Instance *) GState;  // this works because zmachine_state is the first field in Instance.
+        const uint16 external_mem_objects_base = ZORK1_EXTERN_MEM_OBJS_BASE;  // ZORK 1 SPECIFIC MAGIC
+        if (objid == ZORK1_PLAYER_OBJID) {  // ZORK 1 SPECIFIC MAGIC
+            objid = external_mem_objects_base + inst->current_player; // looking for the current player, redirect.
+        }
+
+        if (objid >= external_mem_objects_base) {  // looking for a multiplayer character
+            const int requested_player = (int) (objid - external_mem_objects_base);
+            if (requested_player >= inst->num_players) {
+                GState->die("Invalid multiplayer object id referenced");
+            }
+            ptr = inst->players[requested_player].property_table_data;
+        } else {
+            ptr = getObjectPtr(objid);
+            ptr += 7;  // skip to properties address field.
+            const uint16 addr = READUI16(ptr);
+            ptr = GState->story + addr;
+            ptr += (*ptr * 2) + 1;  // skip object name to start of properties.
+        }
+
+        while (1) {
+            const uint8 info = *(ptr++);
+            const uint16 num = (info & 0x1F);  // 5 bits for the prop id.
+            const uint8 size = ((info >> 5) & 0x7) + 1; // 3 bits for prop size.
+            // these go in descending numeric order, and should fail
+            //  the interpreter if missing. We use 0xFFFFFFFF internally to mean "first property".
+            if ((num == propid) || (propid == 0xFFFFFFFF)) { // found it?
+                if (_size) {
+                    *_size = size;
+                }
+                return ptr;
+            } else if (num < propid) { // we're past it.
+                break;
+            }
+            ptr += size;  // try the next property.
+        }
+    } else {
+        GState->die("write me");
+    }
+
+    return NULL;
+}
+
+// See notes on getObjectPointer(); make sure this messes with the right object.
+static void unparentObject(const uint16 _objid)
+{
+#if 0
+    Instance *inst = (Instance *) GState;  // this works because zmachine_state is the first field in Instance.
+    const uint16 external_mem_objects_base = ZORK1_EXTERN_MEM_OBJS_BASE;  // ZORK 1 SPECIFIC MAGIC
+    const uint16 altobjid = (objid == ZORK1_PLAYER_OBJID) ? (external_mem_objects_base + inst->current_player) : objid;
+    uint8 *objptr = getObjectPtr(objid);
+    uint8 *parentptr = getObjectPtrParent(objptr);
+    if (parentptr != NULL) {  // if NULL, no need to remove it.
+loginfo("UNPARENT %d from %d", (int) objid, (int) objptr[4]);
+        uint8 *ptr = parentptr + 6;  // 4 to skip attrs, 2 to skip to child.
+        while ((*ptr != objid) && (*ptr != altobjid)) { // if not direct child, look through sibling list...
+            ptr = getObjectPtr(*ptr) + 5;  // get sibling field.
+        }
+        *ptr = *(objptr + 5);  // obj sibling takes obj's place.
+    }
+#else
+    uint16 objid = _objid;  // unconst it.
+    Instance *inst = (Instance *) GState;  // this works because zmachine_state is the first field in Instance.
+    const uint16 external_mem_objects_base = ZORK1_EXTERN_MEM_OBJS_BASE;  // ZORK 1 SPECIFIC MAGIC
+    if (objid == ZORK1_PLAYER_OBJID) {  // ZORK 1 SPECIFIC MAGIC
+        objid = external_mem_objects_base + inst->current_player;
+    }
+
+    uint8 *objptr = getObjectPtr(objid);
+    uint8 *parentptr = getObjectPtrParent(objptr);
+    if (parentptr != NULL) {  // if NULL, no need to remove it.
+loginfo("UNPARENT %d from %d", (int) objid, (int) objptr[4]);
+        uint8 *ptr = parentptr + 6;  // 4 to skip attrs, 2 to skip to child.
+        while (*ptr != objid) { // if not direct child, look through sibling list...
+            ptr = getObjectPtr(*ptr) + 5;  // get sibling field.
+        }
+        *ptr = *(objptr + 5);  // obj sibling takes obj's place.
+    }
+#endif
+}
+
 static void writechar_multizork(const int ch)
 {
     Instance *inst = (Instance *) GState;  // this works because zmachine_state is the first field in Instance.
@@ -232,6 +373,44 @@ static void writechar_multizork(const int ch)
     // !!! FIXME: log to database?
 }
 
+// See notes on getObjectPointer(); make sure this messes with the right object.
+static void opcode_insert_obj_multizork(void)
+{
+    Instance *inst = (Instance *) GState;  // this works because zmachine_state is the first field in Instance.
+    uint16 objid = GState->operands[0];
+    const uint16 dstid = GState->operands[1];
+#ifdef MULTIZORK
+loginfo("INSERT %d into %d", (int) objid, (int) dstid);
+#endif
+    const uint16 external_mem_objects_base = ZORK1_EXTERN_MEM_OBJS_BASE;  // ZORK 1 SPECIFIC MAGIC
+    if (objid == ZORK1_PLAYER_OBJID) {  // ZORK 1 SPECIFIC MAGIC
+        objid = external_mem_objects_base + inst->current_player;
+    }
+
+    uint8 *objptr = getObjectPtr(objid);
+    uint8 *dstptr = getObjectPtr(dstid);
+
+    if (GState->header.version <= 3) {
+        unparentObject(objid);  // take object out of its original tree first.
+
+        // now reinsert in the right place.
+        *(objptr + 4) = (uint8) dstid;  // parent field: new destination
+        *(objptr + 5) = *(dstptr + 6);  // sibling field: new dest's old child.
+        *(dstptr + 6) = (uint8) objid;  // dest's child field: object being moved.
+    } else {
+        GState->die("write me");  // fields are different in ver4+.
+    }
+}
+
+
+// When we hit a READ instruction in the Z-Machine, we assume we're back at the
+//  prompt waiting for the user to type their next move. At this point we stop
+//  the simulation, dump any accumulated output to the user, reset the move count
+//  and let the next user's move execute, until each player had their turn, then
+//  the move count increments and we wait for more input from the users.
+//
+// In this sense, READ is the entry point to the Z-Machine, as we stop when hit
+//  this instruction and then run again until the next READ.
 static void opcode_read_multizork(void)
 {
     Instance *inst = (Instance *) GState;  // this works because zmachine_state is the first field in Instance.
@@ -333,6 +512,8 @@ static Instance *create_instance(void)
         }
 
         // override some Z-Machine opcode handlers we need...
+        GState->opcodes[14].fn = opcode_insert_obj_multizork;
+        GState->opcodes[110].fn = opcode_insert_obj_multizork;
         GState->opcodes[181].fn = opcode_save_multizork;
         GState->opcodes[182].fn = opcode_restore_multizork;
         GState->opcodes[183].fn = opcode_restart_multizork;
@@ -340,6 +521,7 @@ static Instance *create_instance(void)
         GState->opcodes[228].fn = opcode_read_multizork;
         GState->writechar = writechar_multizork;
         GState->die = die_multizork;
+
         loginfo("Created instance '%s'", inst->hash);
     }
     return inst;
@@ -377,6 +559,16 @@ static int step_instance(Instance *inst, const int playernum, const char *input)
     GState->bp = player->next_logical_bp;
     assert(player->next_logical_sp < ARRAYSIZE(player->stack));
     memcpy(GState->stack, player->stack, player->next_logical_sp * 2);
+    uint16 *globals = (uint16 *) (GState->story + GState->header.globals_addr);
+
+    // some "globals" are player-specific, so we swap them in before running.
+    globals[0] = player->gvar_location;
+
+const uint8 *ptr = getObjectPtr(180) + 6;  // 4 to skip attrs, 2 to skip to child.
+while (*ptr != 0) {
+    loginfo("START OF STEP ROOM 180 child: %d", (int) *ptr);
+    ptr = getObjectPtr(*ptr) + 5;  // get sibling field.
+}
 
     // If user had hit a READ instruction. Write the user's
     //  input to Z-Machine memory, and tokenize it.
@@ -396,10 +588,14 @@ static int step_instance(Instance *inst, const int playernum, const char *input)
 
         GState->operands[0] = player->next_operands[0];  // tokenizing needs this.
         GState->operands[1] = player->next_operands[1];
+        GState->operand_count = 2;
         player->next_inputbuf = NULL;  // don't do this again until we hit another READ opcode.
         player->next_inputbuflen = 0;
         tokenizeUserInput();  // now the Z-Machine will get what it expects from the previous READ instruction.
     }
+
+    // ZORK 1 SPECIFIC MAGIC: mark the current player as invisible so he doesn't "see" himself.
+    // !!! FIXME
 
     // Now run the Z-Machine!
     if (setjmp(inst->jmpbuf) == 0) {  // !!! FIXME: can we dump die() so we don't need this?
@@ -408,12 +604,18 @@ static int step_instance(Instance *inst, const int playernum, const char *input)
             runInstruction();
         }
 
+        // ZORK 1 SPECIFIC MAGIC: mark the current player as visible so other players see him.
+        // !!! FIXME
+
         // save off Z-Machine state for next time.
         player->next_logical_pc = GState->logical_pc;
         player->next_logical_sp = (uint32) (GState->sp - GState->stack);
         player->next_logical_bp = GState->bp;
         assert(player->next_logical_sp < ARRAYSIZE(player->stack));
         memcpy(player->stack, GState->stack, player->next_logical_sp * 2);
+
+        // some "globals" are player-specific, so we swap them out after running.
+        player->gvar_location = globals[0];
 
         if (inst->zmachine_state.quit) {
             // we've hit a QUIT opcode, which means, at least for Zork 1, that the user
@@ -429,6 +631,13 @@ static int step_instance(Instance *inst, const int playernum, const char *input)
         free_instance(inst);
         retval = 0;
     }
+
+ptr = getObjectPtr(180) + 6;  // 4 to skip attrs, 2 to skip to child.
+while (*ptr != 0) {
+    loginfo("END OF STEP ROOM 180 child: %d", (int) *ptr);
+    ptr = getObjectPtr(*ptr) + 5;  // get sibling field.
+}
+
 
     GState = NULL;
     return retval;
@@ -455,14 +664,54 @@ static void start_instance(Instance *inst)
 
     // !!! FIXME: write the instance and all players to the database.
 
+    // !!! FIXME: split this out to a separate function.
+    const uint8 *playerptr = GState->story + GState->header.objtab_addr;
+    playerptr += 31 * sizeof (uint16);  // skip properties defaults table
+    playerptr += 9 * (ZORK1_PLAYER_OBJID-1);  // find object in object table  // ZORK 1 SPECIFIC MAGIC
+
+    const uint8 *propptr = playerptr + 7;  // skip to properties address field.
+    const uint16 propaddr = READUI16(propptr);
+    propptr = GState->story + propaddr;
+    propptr += (*propptr * 2) + 1;  // skip object name to start of properties.
+    uint16 propsize;
+    for (propsize = 0; propptr[propsize]; propsize += ((propptr[propsize] >> 5) & 0x7) + 1) { /* spin */ }
+    assert(propsize < sizeof (inst->players[0].property_table_data));
+
     for (size_t i = 0; i < num_players; i++) {
         Player *player = &inst->players[i];
         Connection *conn = player->connection;
+
+        // Copy the original player object for each player.
+        memcpy(player->object_table_data, playerptr, sizeof (player->object_table_data));
+
+        // Build a custom property table for each player.
+        uint8 *propdst = player->property_table_data;
+        propdst++ ;  // text-length (number of 2-byte words). Skip for now.
+
+        // Encode the player's name to ZSCII. We cheat and only let you have
+        // lowercase letters for now (!!! FIXME: but a better ZSCII encoder here would open options)
+        uint8 numwords = 0;
+        const char *str = player->username;
+        while (*str) {
+            const uint16 zch1 = (uint8) ((*(str++) - 'a') + 6);
+            const uint16 zch2 = *str ? ((uint8) ((*(str++) - 'a') + 6)) : 5;  // 5 is a padding character at end of string.
+            const uint16 zch3 = *str ? ((uint8) ((*(str++) - 'a') + 6)) : 5;  // 5 is a padding character at end of string.
+            const uint16 termbit = ((*str == '\0') || (zch2 == 5) || (zch3 == 5)) ? (1 << 15) : 0;
+            const uint16 zword = (zch1 << 10) | (zch2 << 5) | zch3 | termbit;
+            WRITEUI16(propdst, zword);
+            numwords++;
+        }
+        *player->property_table_data = numwords;
+
+        assert((propsize + (numwords * 2) + 1) <= sizeof (player->property_table_data));
+        memcpy(propdst, propptr, propsize);
+
         generate_unique_hash(player->hash);  // assign a hash to the player while we're here so they can rejoin.
         snprintf(players->username, sizeof (player->username), "%s", conn->username);
         write_to_connection(conn, "\n\n");
         write_to_connection(conn, "*** THE GAME IS STARTING ***\n");
         write_to_connection(conn, "You can leave at any time by typing 'quit'.\n");
+        //write_to_connection(conn, "You can speak to others in the same room with '!some text' or the whole game with '!!some text'.\n");
         write_to_connection(conn, "If you get disconnected or leave, you can rejoin at any time\n");
         write_to_connection(conn, " with this access code: '");
         write_to_connection(conn, player->hash);
@@ -472,12 +721,33 @@ static void start_instance(Instance *inst)
 
     inst->started = 1;
 
+    const uint16 external_mem_objects_base = ZORK1_EXTERN_MEM_OBJS_BASE;  // ZORK 1 SPECIFIC MAGIC
+    GState = &inst->zmachine_state;
+    uint8 *startroomptr = getObjectPtr(180);  // ZORK 1 SPECIFIC MAGIC: West of House room.
+    GState = NULL;
+    const uint8 orig_start_room_child = startroomptr[6];
+
     // run a step right now, so they get the intro text and their next input will be for the game.
     for (int i = 0; i < num_players; i++) {
         // just this once, reset the Z-Machine between each player, so that we end up with
-        //  one definite state and things like intro text that only runs if the "touchbit" on
-        //  the intro room isn't set gets run...
+        //  one definite state and things like intro text gets run...
+        // !!! FIXME: this can just copy dynamic memory, not the whole thing.
         memcpy(inst->zmachine_state.story, GOriginalStory, GOriginalStoryLen);
+
+        // ZORK 1 SPECIFIC MAGIC:
+        // Insert all the players into the West of House room each time. The
+        //  game will move the current player there on startup, but we're
+        //  resetting dynamic memory between each step here, which wipes
+        //  those moves.
+        for (int j = 0; j < num_players; j++) {
+            Player *player = &inst->players[j];
+            uint8 *ptr = player->object_table_data;
+            ptr[4] = 180;  // parent is West of House room.
+            ptr[5] = (j < (num_players-1)) ? (external_mem_objects_base + j + 1) : orig_start_room_child;
+            assert(ptr[6] == 0);  // assume player object has no initial children
+        }
+        startroomptr[6] = external_mem_objects_base;  // make players start of child list for start room.
+
 
         // Run until the READ instruction, then gameplay officially starts.
         if (!step_instance(inst, i, NULL)) {

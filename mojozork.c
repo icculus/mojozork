@@ -523,6 +523,8 @@ static void opcode_store(void)
     WRITEUI16(store, src);
 } // opcode_store
 
+static uint8 *getObjectPtr(const uint16 objid);
+#ifndef MULTIZORK
 static uint8 *getObjectPtr(const uint16 objid)
 {
     if (objid == 0)
@@ -536,6 +538,7 @@ static uint8 *getObjectPtr(const uint16 objid)
     ptr += 9 * (objid-1);  // find object in object table
     return ptr;
 } // getObjectPtr
+#endif
 
 static void opcode_test_attr(void)
 {
@@ -602,6 +605,8 @@ static uint8 *getObjectPtrParent(uint8 *objptr)
     } // else
 } // getGetObjectPtrParent
 
+static void unparentObject(const uint16 objid);
+#ifndef MULTIZORK
 static void unparentObject(const uint16 objid)
 {
     uint8 *objptr = getObjectPtr(objid);
@@ -614,6 +619,7 @@ static void unparentObject(const uint16 objid)
         *ptr = *(objptr + 5);  // obj sibling takes obj's place.
     } // if
 } // unparentObject
+#endif
 
 static void opcode_insert_obj(void)
 {
@@ -655,6 +661,8 @@ static void opcode_remove_obj(void)
     } // else
 } // opcode_remove_obj
 
+static uint8 *getObjectProperty(const uint16 objid, const uint32 propid, uint8 *_size);
+#ifndef MULTIZORK
 static uint8 *getObjectProperty(const uint16 objid, const uint32 propid, uint8 *_size)
 {
     uint8 *ptr = getObjectPtr(objid);
@@ -692,6 +700,7 @@ static uint8 *getObjectProperty(const uint16 objid, const uint32 propid, uint8 *
 
     return NULL;
 } // getObjectProperty
+#endif
 
 static void opcode_put_prop(void)
 {
