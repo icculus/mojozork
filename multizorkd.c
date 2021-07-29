@@ -111,7 +111,12 @@ typedef struct Player
     uint16 next_operands[2];  // to save off the READ operands for later.
     uint8 object_table_data[9];
     uint8 property_table_data[MULTIPLAYER_PROP_DATALEN];
+    // ZORK 1 SPECIFIC MAGIC: these are player-specific globals we need to manage.
     uint16 gvar_location;
+    uint16 gvar_coffin_held;
+    uint16 gvar_dead;
+    uint16 gvar_deaths;
+    // !!! FIXME: several more
 } Player;
 
 typedef struct Instance
@@ -551,8 +556,12 @@ static int step_instance(Instance *inst, const int playernum, const char *input)
     memcpy(GState->stack, player->stack, player->next_logical_sp * 2);
     uint16 *globals = (uint16 *) (GState->story + GState->header.globals_addr);
 
+    // ZORK 1 SPECIFIC MAGIC:
     // some "globals" are player-specific, so we swap them in before running.
     globals[0] = player->gvar_location;
+    globals[83] = player->gvar_coffin_held;
+    globals[96] = player->gvar_dead;
+    globals[99] = player->gvar_deaths;
 
     // If user had hit a READ instruction. Write the user's
     //  input to Z-Machine memory, and tokenize it.
@@ -598,8 +607,12 @@ static int step_instance(Instance *inst, const int playernum, const char *input)
         assert(player->next_logical_sp < ARRAYSIZE(player->stack));
         memcpy(player->stack, GState->stack, player->next_logical_sp * 2);
 
+        // ZORK 1 SPECIFIC MAGIC:
         // some "globals" are player-specific, so we swap them out after running.
         player->gvar_location = globals[0];
+        player->gvar_coffin_held = globals[83];
+        player->gvar_dead = globals[96];
+        player->gvar_deaths = globals[99];
 
         if (inst->zmachine_state.quit) {
             // we've hit a QUIT opcode, which means, at least for Zork 1, that the user
