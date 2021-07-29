@@ -246,23 +246,43 @@ static Player *get_current_player(Instance *inst)
 //  for the player.
 #define ZORK1_PLAYER_OBJID 4  // ZORK 1 SPECIFIC MAGIC
 #define ZORK1_EXTERN_MEM_OBJS_BASE 251  // ZORK 1 SPECIFIC MAGIC
+
+static uint16 remap_objectid(const uint16 objid)
+{
+    Instance *inst = (Instance *) GState;  // this works because zmachine_state is the first field in Instance.
+    const uint16 external_mem_objects_base = ZORK1_EXTERN_MEM_OBJS_BASE;  // ZORK 1 SPECIFIC MAGIC
+    return (objid == ZORK1_PLAYER_OBJID) ? (external_mem_objects_base + inst->current_player) : objid;  // ZORK 1 SPECIFIC MAGIC
+}
+
+// see comments on getObjectProperty
+static uint8 *get_virtualized_mem_ptr(const uint16 offset)
+{
+    const uint16 fake_prop_base_addr = (uint16) (0x10000 - (MULTIPLAYER_PROP_DATALEN * 5));
+    uint8 *ptr;
+    if (offset < fake_prop_base_addr) {
+        ptr = GState->story + offset;
+    } else {
+        Instance *inst = (Instance *) GState;  // this works because zmachine_state is the first field in Instance.
+        const uint16 base_offset = offset - fake_prop_base_addr;  // unconst.
+        const int requested_player = (int) (base_offset / MULTIPLAYER_PROP_DATALEN);
+        ptr = inst->players[requested_player].property_table_data + base_offset;
+    }
+    return ptr;
+}
+
 static uint8 *getObjectPtr(const uint16 _objid)
 {
-    uint16 objid = _objid;  // unconst it.
+    const uint16 objid = remap_objectid(_objid);
     if (objid == 0) {
         GState->die("Object id #0 referenced");
     } else if ((GState->header.version <= 3) && (objid > 255)) {
         GState->die("Invalid object id referenced");
     }
 
-    Instance *inst = (Instance *) GState;  // this works because zmachine_state is the first field in Instance.
     const uint16 external_mem_objects_base = ZORK1_EXTERN_MEM_OBJS_BASE;  // ZORK 1 SPECIFIC MAGIC
-    if (objid == ZORK1_PLAYER_OBJID) {  // ZORK 1 SPECIFIC MAGIC
-        objid = external_mem_objects_base + inst->current_player; // looking for the current player, redirect.
-    }
-
     uint8 *ptr;
     if (objid >= external_mem_objects_base) {  // looking for a multiplayer character
+    Instance *inst = (Instance *) GState;  // this works because zmachine_state is the first field in Instance.
         const int requested_player = (int) (objid - external_mem_objects_base);
         if (requested_player >= inst->num_players) {
             GState->die("Invalid multiplayer object id referenced");
@@ -290,16 +310,12 @@ static uint8 *getObjectPtr(const uint16 _objid)
 //  the fake address.
 static uint8 *getObjectProperty(const uint16 _objid, const uint32 propid, uint8 *_size)
 {
-    uint16 objid = _objid;  // unconst it.
+    const uint16 objid = remap_objectid(_objid);
     uint8 *ptr;
     if (GState->header.version <= 3) {
-        Instance *inst = (Instance *) GState;  // this works because zmachine_state is the first field in Instance.
         const uint16 external_mem_objects_base = ZORK1_EXTERN_MEM_OBJS_BASE;  // ZORK 1 SPECIFIC MAGIC
-        if (objid == ZORK1_PLAYER_OBJID) {  // ZORK 1 SPECIFIC MAGIC
-            objid = external_mem_objects_base + inst->current_player; // looking for the current player, redirect.
-        }
-
         if (objid >= external_mem_objects_base) {  // looking for a multiplayer character
+            Instance *inst = (Instance *) GState;  // this works because zmachine_state is the first field in Instance.
             const int requested_player = (int) (objid - external_mem_objects_base);
             if (requested_player >= inst->num_players) {
                 GState->die("Invalid multiplayer object id referenced");
@@ -336,27 +352,6 @@ static uint8 *getObjectProperty(const uint16 _objid, const uint32 propid, uint8 
     return NULL;
 }
 
-// See notes on getObjectPointer(); make sure this messes with the right object.
-static void unparentObject(const uint16 _objid)
-{
-    uint16 objid = _objid;  // unconst it.
-    Instance *inst = (Instance *) GState;  // this works because zmachine_state is the first field in Instance.
-    const uint16 external_mem_objects_base = ZORK1_EXTERN_MEM_OBJS_BASE;  // ZORK 1 SPECIFIC MAGIC
-    if (objid == ZORK1_PLAYER_OBJID) {  // ZORK 1 SPECIFIC MAGIC
-        objid = external_mem_objects_base + inst->current_player;
-    }
-
-    uint8 *objptr = getObjectPtr(objid);
-    uint8 *parentptr = getObjectPtrParent(objptr);
-    if (parentptr != NULL) {  // if NULL, no need to remove it.
-        uint8 *ptr = parentptr + 6;  // 4 to skip attrs, 2 to skip to child.
-        while (*ptr != objid) { // if not direct child, look through sibling list...
-            ptr = getObjectPtr(*ptr) + 5;  // get sibling field.
-        }
-        *ptr = *(objptr + 5);  // obj sibling takes obj's place.
-    }
-}
-
 static void writechar_multizork(const int ch)
 {
     Instance *inst = (Instance *) GState;  // this works because zmachine_state is the first field in Instance.
@@ -365,45 +360,14 @@ static void writechar_multizork(const int ch)
     // !!! FIXME: log to database?
 }
 
-// See notes on getObjectPointer(); make sure this messes with the right object.
-static void opcode_insert_obj_multizork(void)
-{
-    Instance *inst = (Instance *) GState;  // this works because zmachine_state is the first field in Instance.
-    uint16 objid = GState->operands[0];
-    const uint16 dstid = GState->operands[1];
-    const uint16 external_mem_objects_base = ZORK1_EXTERN_MEM_OBJS_BASE;  // ZORK 1 SPECIFIC MAGIC
-    if (objid == ZORK1_PLAYER_OBJID) {  // ZORK 1 SPECIFIC MAGIC
-        objid = external_mem_objects_base + inst->current_player;
-    }
-
-    uint8 *objptr = getObjectPtr(objid);
-    uint8 *dstptr = getObjectPtr(dstid);
-
-    if (GState->header.version <= 3) {
-        unparentObject(objid);  // take object out of its original tree first.
-
-        // now reinsert in the right place.
-        *(objptr + 4) = (uint8) dstid;  // parent field: new destination
-        *(objptr + 5) = *(dstptr + 6);  // sibling field: new dest's old child.
-        *(dstptr + 6) = (uint8) objid;  // dest's child field: object being moved.
-    } else {
-        GState->die("write me");  // fields are different in ver4+.
-    }
-}
-
 // see comments on getObjectProperty
 static void opcode_get_prop_addr_multizork(void)
 {
     Instance *inst = (Instance *) GState;  // this works because zmachine_state is the first field in Instance.
     uint8 *store = varAddress(*(GState->pc++), 1);
-    uint16 objid = GState->operands[0];
+    const uint16 objid = remap_objectid(GState->operands[0]);
     const uint16 propid = GState->operands[1];
-
     const uint16 external_mem_objects_base = ZORK1_EXTERN_MEM_OBJS_BASE;  // ZORK 1 SPECIFIC MAGIC
-    if (objid == ZORK1_PLAYER_OBJID) {  // ZORK 1 SPECIFIC MAGIC
-        objid = external_mem_objects_base + inst->current_player;
-    }
-
     uint8 *ptr = getObjectProperty(objid, propid, NULL);
     uint16 result;
 
@@ -419,91 +383,6 @@ static void opcode_get_prop_addr_multizork(void)
     }
     WRITEUI16(store, result);
 }
-
-// see comments on getObjectProperty
-static uint8 *get_virtualized_mem_ptr(uint16 offset)
-{
-    const uint16 fake_prop_base_addr = (uint16) (0x10000 - (MULTIPLAYER_PROP_DATALEN * 5));
-    uint8 *ptr;
-    if (offset < fake_prop_base_addr) {
-        ptr = GState->story + offset;
-    } else {
-        Instance *inst = (Instance *) GState;  // this works because zmachine_state is the first field in Instance.
-        offset -= fake_prop_base_addr;
-        const int requested_player = (int) (offset / MULTIPLAYER_PROP_DATALEN);
-        ptr = inst->players[requested_player].property_table_data + offset;
-    }
-    return ptr;
-}
-
-// see comments on getObjectProperty
-static void opcode_get_prop_len_multizork(void)
-{
-    uint8 *store = varAddress(*(GState->pc++), 1);
-    uint16 result;
-
-    if (GState->operands[0] == 0)
-        result = 0;  // this must return 0, to avoid a bug in older Infocom games.
-    else if (GState->header.version <= 3)
-    {
-        const uint16 offset = GState->operands[0];
-        const uint8 *ptr = get_virtualized_mem_ptr(offset);
-        const uint8 info = ptr[-1];  // the size field.
-        result = ((info >> 5) & 0x7) + 1; // 3 bits for prop size.
-    } // if
-    else
-    {
-        GState->die("write me");
-    } // else
-
-    WRITEUI16(store, result);
-}
-
-// see comments on getObjectProperty
-static void opcode_loadw_multizork(void)
-{
-    uint16 *store = (uint16 *) varAddress(*(GState->pc++), 1);
-    FIXME("can only read from dynamic or static memory (not highmem).");
-    FIXME("how does overflow work here? Do these wrap around?");
-    const uint16 offset = (GState->operands[0] + (GState->operands[1] * 2));
-    const uint16 *src = (const uint16 *) get_virtualized_mem_ptr(offset);
-    *store = *src;  // copy from bigendian to bigendian: no byteswap.
-}
-
-// see comments on getObjectProperty
-static void opcode_loadb_multizork(void)
-{
-    uint8 *store = varAddress(*(GState->pc++), 1);
-    FIXME("can only read from dynamic or static memory (not highmem).");
-    FIXME("how does overflow work here? Do these wrap around?");
-    const uint16 offset = (GState->operands[0] + GState->operands[1]);
-    const uint8 *src = get_virtualized_mem_ptr(offset);
-    const uint16 value = *src;  // expand out to 16-bit before storing.
-    WRITEUI16(store, value);
-}
-
-// see comments on getObjectProperty
-static void opcode_storew_multizork(void)
-{
-    FIXME("can only write to dynamic memory.");
-    FIXME("how does overflow work here? Do these wrap around?");
-    const uint16 offset = (GState->operands[0] + (GState->operands[1] * 2));
-    uint8 *dst = get_virtualized_mem_ptr(offset);
-    const uint16 src = GState->operands[2];
-    WRITEUI16(dst, src);
-}
-
-// see comments on getObjectProperty
-static void opcode_storeb_multizork(void)
-{
-    FIXME("can only write to dynamic memory.");
-    FIXME("how does overflow work here? Do these wrap around?");
-    const uint16 offset = (GState->operands[0] + GState->operands[1]);
-    uint8 *dst = get_virtualized_mem_ptr(offset);
-    const uint8 src = (uint8) GState->operands[2];
-    *dst = src;
-}
-
 
 
 // When we hit a READ instruction in the Z-Machine, we assume we're back at the
@@ -615,17 +494,11 @@ static Instance *create_instance(void)
         }
 
         // override some Z-Machine opcode handlers we need...
-        GState->opcodes[14].fn = opcode_insert_obj_multizork;
-        GState->opcodes[15].fn = opcode_loadw_multizork;
-        GState->opcodes[16].fn = opcode_loadb_multizork;
         GState->opcodes[18].fn = opcode_get_prop_addr_multizork;
-        GState->opcodes[132].fn = opcode_get_prop_len_multizork;
         GState->opcodes[181].fn = opcode_save_multizork;
         GState->opcodes[182].fn = opcode_restore_multizork;
         GState->opcodes[183].fn = opcode_restart_multizork;
         GState->opcodes[186].fn = opcode_quit_multizork;
-        GState->opcodes[225].fn = opcode_storew_multizork;
-        GState->opcodes[226].fn = opcode_storeb_multizork;
         GState->opcodes[228].fn = opcode_read_multizork;
 
         for (uint8 i = 32; i <= 127; i++)  // 2OP opcodes repeating with different operand forms.

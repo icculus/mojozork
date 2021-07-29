@@ -125,6 +125,14 @@ typedef struct ZMachineState
 static ZMachineState *GState = NULL;
 
 
+static uint8 *get_virtualized_mem_ptr(const uint16 offset);
+static uint16 remap_objectid(const uint16 objid);
+
+#ifndef MULTIZORK
+static uint8 *get_virtualized_mem_ptr(const uint16 offset) { return GState->story + offset; }
+static uint16 remap_objectid(const uint16 objid) { return objid; }
+#endif
+
 // The Z-Machine can't directly address 32-bits, but this needs to expand past 16 bits when we multiply by 2, 4, or 8, etc.
 static uint8 *unpackAddress(const uint32 addr)
 {
@@ -484,7 +492,8 @@ static void opcode_loadw(void)
     uint16 *store = (uint16 *) varAddress(*(GState->pc++), 1);
     FIXME("can only read from dynamic or static memory (not highmem).");
     FIXME("how does overflow work here? Do these wrap around?");
-    const uint16 *src = (uint16 *) (GState->story + (GState->operands[0] + (GState->operands[1] * 2)));
+    const uint16 offset = (GState->operands[0] + (GState->operands[1] * 2));
+    const uint16 *src = (const uint16 *) get_virtualized_mem_ptr(offset);
     *store = *src;  // copy from bigendian to bigendian: no byteswap.
 } // opcode_loadw
 
@@ -493,7 +502,8 @@ static void opcode_loadb(void)
     uint8 *store = varAddress(*(GState->pc++), 1);
     FIXME("can only read from dynamic or static memory (not highmem).");
     FIXME("how does overflow work here? Do these wrap around?");
-    const uint8 *src = GState->story + (GState->operands[0] + (GState->operands[1]));
+    const uint16 offset = (GState->operands[0] + GState->operands[1]);
+    const uint8 *src = get_virtualized_mem_ptr(offset);
     const uint16 value = *src;  // expand out to 16-bit before storing.
     WRITEUI16(store, value);
 } // opcode_loadb
@@ -502,7 +512,8 @@ static void opcode_storew(void)
 {
     FIXME("can only write to dynamic memory.");
     FIXME("how does overflow work here? Do these wrap around?");
-    uint8 *dst = (GState->story + (GState->operands[0] + (GState->operands[1] * 2)));
+    const uint16 offset = (GState->operands[0] + (GState->operands[1] * 2));
+    uint8 *dst = get_virtualized_mem_ptr(offset);
     const uint16 src = GState->operands[2];
     WRITEUI16(dst, src);
 } // opcode_storew
@@ -511,7 +522,8 @@ static void opcode_storeb(void)
 {
     FIXME("can only write to dynamic memory.");
     FIXME("how does overflow work here? Do these wrap around?");
-    uint8 *dst = (GState->story + GState->operands[0] + GState->operands[1]);
+    const uint16 offset = (GState->operands[0] + GState->operands[1]);
+    uint8 *dst = get_virtualized_mem_ptr(offset);
     const uint8 src = (uint8) GState->operands[2];
     *dst = src;
 } // opcode_storeb
@@ -591,12 +603,11 @@ static void opcode_clear_attr(void)
     } // else
 } // opcode_clear_attr
 
-static uint8 *getObjectPtrParent(uint8 *objptr)
+static uint8 *getObjectPtrParent(const uint8 *objptr)
 {
     if (GState->header.version <= 3)
     {
-        objptr += 4;  // skip object attributes.
-        const uint16 parent = *objptr;
+        const uint16 parent = objptr[4];
         return parent ? getObjectPtr(parent) : NULL;
     }
     else
@@ -605,10 +616,9 @@ static uint8 *getObjectPtrParent(uint8 *objptr)
     } // else
 } // getGetObjectPtrParent
 
-static void unparentObject(const uint16 objid);
-#ifndef MULTIZORK
-static void unparentObject(const uint16 objid)
+static void unparentObject(const uint16 _objid)
 {
+    const uint16 objid = remap_objectid(_objid);
     uint8 *objptr = getObjectPtr(objid);
     uint8 *parentptr = getObjectPtrParent(objptr);
     if (parentptr != NULL)  // if NULL, no need to remove it.
@@ -619,12 +629,11 @@ static void unparentObject(const uint16 objid)
         *ptr = *(objptr + 5);  // obj sibling takes obj's place.
     } // if
 } // unparentObject
-#endif
 
 static void opcode_insert_obj(void)
 {
-    const uint16 objid = GState->operands[0];
-    const uint16 dstid = GState->operands[1];
+    const uint16 objid = remap_objectid(GState->operands[0]);
+    const uint16 dstid = remap_objectid(GState->operands[1]);
 
     uint8 *objptr = getObjectPtr(objid);
     uint8 *dstptr = getObjectPtr(dstid);
@@ -775,7 +784,8 @@ static void opcode_get_prop_len(void)
         result = 0;  // this must return 0, to avoid a bug in older Infocom games.
     else if (GState->header.version <= 3)
     {
-        const uint8 *ptr = GState->story + GState->operands[0];
+        const uint16 offset = GState->operands[0];
+        const uint8 *ptr = get_virtualized_mem_ptr(offset);
         const uint8 info = ptr[-1];  // the size field.
         result = ((info >> 5) & 0x7) + 1; // 3 bits for prop size.
     } // if
