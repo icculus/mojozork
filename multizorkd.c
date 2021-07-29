@@ -96,6 +96,7 @@ typedef enum ConnectionState
     // never happens, we destroy the object once we hit this state. CONNSTATE_DISCONNECTED
 } ConnectionState;
 
+#define MULTIPLAYER_PROP_DATALEN 32  // ZORK 1 SPECIFIC MAGIC: other games (or longer player names) might need more.
 typedef struct Player
 {
     Connection *connection;  // null if user is disconnected; player lives on.
@@ -109,7 +110,7 @@ typedef struct Player
     uint8 next_inputbuflen;
     uint16 next_operands[2];  // to save off the READ operands for later.
     uint8 object_table_data[9];
-    uint8 property_table_data[32];  // ZORK 1 SPECIFIC MAGIC: other games (or longer player names) might need more.
+    uint8 property_table_data[MULTIPLAYER_PROP_DATALEN];
     uint16 gvar_location;
 } Player;
 
@@ -276,9 +277,17 @@ static uint8 *getObjectPtr(const uint16 _objid)
 }
 
 // See notes on getObjectPointer(); we need to provide external memory for the multiplayer object property tables, too.
-// There _does_ seem to be some zero'd out space between the global variables and the Grammar Pointer Table, but
-// I might be wrong, and keeping this external lets us just wipe out all of dynamic memory to step the game identically
-// for all players on startup.
+//
+// ZORK 1 SPECIFIC MAGIC:
+// We need memory for properties for each multiplayer object, and
+//  while properties can be anywhere in the dynamic memory area,
+//  there isn't any place obviously available. However, for Zork 1,
+//  The dynamic+static area is less than 0xFFFF, so there are
+//  parts of the address space that are off-limits to the game
+//  where we can pretend to store these--in what is actually
+//  code locations--and then override the parts of the Z-Machine
+//  that might access these to point them elsewhere when we see
+//  the fake address.
 static uint8 *getObjectProperty(const uint16 _objid, const uint32 propid, uint8 *_size)
 {
     uint16 objid = _objid;  // unconst it.
@@ -402,6 +411,120 @@ loginfo("INSERT %d into %d", (int) objid, (int) dstid);
     }
 }
 
+// see comments on getObjectProperty
+static void opcode_get_prop_addr_multizork(void)
+{
+    Instance *inst = (Instance *) GState;  // this works because zmachine_state is the first field in Instance.
+    uint8 *store = varAddress(*(GState->pc++), 1);
+    uint16 objid = GState->operands[0];
+    const uint16 propid = GState->operands[1];
+
+    const uint16 external_mem_objects_base = ZORK1_EXTERN_MEM_OBJS_BASE;  // ZORK 1 SPECIFIC MAGIC
+    if (objid == ZORK1_PLAYER_OBJID) {  // ZORK 1 SPECIFIC MAGIC
+        objid = external_mem_objects_base + inst->current_player;
+    }
+
+    uint8 *ptr = getObjectProperty(objid, propid, NULL);
+    uint16 result;
+
+    if (objid >= external_mem_objects_base) {  // looking for a multiplayer character
+        const uint16 fake_prop_base_addr = (uint16) (0x10000 - (MULTIPLAYER_PROP_DATALEN * 5));
+        const int requested_player = (int) (objid - external_mem_objects_base);
+        if (requested_player >= inst->num_players) {
+            GState->die("Invalid multiplayer object id referenced");
+        }
+        result = fake_prop_base_addr + (MULTIPLAYER_PROP_DATALEN * requested_player);  // we give each player FAKE bytes at the end of the address space.
+    } else {
+        result = ptr ? ((uint16) (ptr-GState->story)) : 0;
+    }
+    WRITEUI16(store, result);
+}
+
+// see comments on getObjectProperty
+static uint8 *get_virtualized_mem_ptr(uint16 offset)
+{
+    const uint16 fake_prop_base_addr = (uint16) (0x10000 - (MULTIPLAYER_PROP_DATALEN * 5));
+    uint8 *ptr;
+    if (offset < fake_prop_base_addr) {
+        ptr = GState->story + offset;
+    } else {
+        Instance *inst = (Instance *) GState;  // this works because zmachine_state is the first field in Instance.
+        offset -= fake_prop_base_addr;
+        const int requested_player = (int) (offset / MULTIPLAYER_PROP_DATALEN);
+        ptr = inst->players[requested_player].property_table_data + offset;
+    }
+    return ptr;
+}
+
+// see comments on getObjectProperty
+static void opcode_get_prop_len_multizork(void)
+{
+    uint8 *store = varAddress(*(GState->pc++), 1);
+    uint16 result;
+
+    if (GState->operands[0] == 0)
+        result = 0;  // this must return 0, to avoid a bug in older Infocom games.
+    else if (GState->header.version <= 3)
+    {
+        const uint16 offset = GState->operands[0];
+        const uint8 *ptr = get_virtualized_mem_ptr(offset);
+        const uint8 info = ptr[-1];  // the size field.
+        result = ((info >> 5) & 0x7) + 1; // 3 bits for prop size.
+    } // if
+    else
+    {
+        GState->die("write me");
+    } // else
+
+    WRITEUI16(store, result);
+}
+
+// see comments on getObjectProperty
+static void opcode_loadw_multizork(void)
+{
+    uint16 *store = (uint16 *) varAddress(*(GState->pc++), 1);
+    FIXME("can only read from dynamic or static memory (not highmem).");
+    FIXME("how does overflow work here? Do these wrap around?");
+    const uint16 offset = (GState->operands[0] + (GState->operands[1] * 2));
+    const uint16 *src = (const uint16 *) get_virtualized_mem_ptr(offset);
+    *store = *src;  // copy from bigendian to bigendian: no byteswap.
+}
+
+// see comments on getObjectProperty
+static void opcode_loadb_multizork(void)
+{
+    uint8 *store = varAddress(*(GState->pc++), 1);
+    FIXME("can only read from dynamic or static memory (not highmem).");
+    FIXME("how does overflow work here? Do these wrap around?");
+    const uint16 offset = (GState->operands[0] + GState->operands[1]);
+    const uint8 *src = get_virtualized_mem_ptr(offset);
+    const uint16 value = *src;  // expand out to 16-bit before storing.
+    WRITEUI16(store, value);
+}
+
+// see comments on getObjectProperty
+static void opcode_storew_multizork(void)
+{
+    FIXME("can only write to dynamic memory.");
+    FIXME("how does overflow work here? Do these wrap around?");
+    const uint16 offset = (GState->operands[0] + (GState->operands[1] * 2));
+    uint8 *dst = get_virtualized_mem_ptr(offset);
+    const uint16 src = GState->operands[2];
+    WRITEUI16(dst, src);
+}
+
+// see comments on getObjectProperty
+static void opcode_storeb_multizork(void)
+{
+    FIXME("can only write to dynamic memory.");
+    FIXME("how does overflow work here? Do these wrap around?");
+    const uint16 offset = (GState->operands[0] + GState->operands[1]);
+    uint8 *dst = get_virtualized_mem_ptr(offset);
+    const uint8 src = (uint8) GState->operands[2];
+    *dst = src;
+}
+
+
 
 // When we hit a READ instruction in the Z-Machine, we assume we're back at the
 //  prompt waiting for the user to type their next move. At this point we stop
@@ -513,12 +636,25 @@ static Instance *create_instance(void)
 
         // override some Z-Machine opcode handlers we need...
         GState->opcodes[14].fn = opcode_insert_obj_multizork;
-        GState->opcodes[110].fn = opcode_insert_obj_multizork;
+        GState->opcodes[15].fn = opcode_loadw_multizork;
+        GState->opcodes[16].fn = opcode_loadb_multizork;
+        GState->opcodes[18].fn = opcode_get_prop_addr_multizork;
+        GState->opcodes[132].fn = opcode_get_prop_len_multizork;
         GState->opcodes[181].fn = opcode_save_multizork;
         GState->opcodes[182].fn = opcode_restore_multizork;
         GState->opcodes[183].fn = opcode_restart_multizork;
         GState->opcodes[186].fn = opcode_quit_multizork;
+        GState->opcodes[225].fn = opcode_storew_multizork;
+        GState->opcodes[226].fn = opcode_storeb_multizork;
         GState->opcodes[228].fn = opcode_read_multizork;
+
+        for (uint8 i = 32; i <= 127; i++)  // 2OP opcodes repeating with different operand forms.
+            GState->opcodes[i] = GState->opcodes[i % 32];
+        for (uint8 i = 144; i <= 175; i++)  // 1OP opcodes repeating with different operand forms.
+            GState->opcodes[i] = GState->opcodes[128 + (i % 16)];
+        for (uint8 i = 192; i <= 223; i++)  // 2OP opcodes repeating with VAR operand forms.
+            GState->opcodes[i] = GState->opcodes[i % 32];
+
         GState->writechar = writechar_multizork;
         GState->die = die_multizork;
 
