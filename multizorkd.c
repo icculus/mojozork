@@ -599,7 +599,12 @@ static int step_instance(Instance *inst, const int playernum, const char *input)
     }
 
     // ZORK 1 SPECIFIC MAGIC: mark the current player as invisible so he doesn't "see" himself.
-    // !!! FIXME
+    GState->operands[0] = ZORK1_PLAYER_OBJID;
+    GState->operands[1] = 0x07;  // INVISIBLE bit
+    opcode_set_attr();
+    GState->operands[0] = ZORK1_PLAYER_OBJID;
+    GState->operands[1] = 0x0E;  // NDESCBIT bit
+    opcode_set_attr();
 
     // Now run the Z-Machine!
     if (setjmp(inst->jmpbuf) == 0) {  // !!! FIXME: can we dump die() so we don't need this?
@@ -607,9 +612,6 @@ static int step_instance(Instance *inst, const int playernum, const char *input)
         while (!inst->step_completed) {
             runInstruction();
         }
-
-        // ZORK 1 SPECIFIC MAGIC: mark the current player as visible so other players see him.
-        // !!! FIXME
 
         // save off Z-Machine state for next time.
         player->next_logical_pc = GState->logical_pc;
@@ -624,6 +626,14 @@ static int step_instance(Instance *inst, const int playernum, const char *input)
         player->gvar_coffin_held = globals[83];
         player->gvar_dead = globals[96];
         player->gvar_deaths = globals[99];
+
+        // ZORK 1 SPECIFIC MAGIC: mark the current player as visible so other players see him.
+        GState->operands[0] = ZORK1_PLAYER_OBJID;
+        GState->operands[1] = 0x07;  // INVISIBLE bit
+        opcode_clear_attr();
+        GState->operands[0] = ZORK1_PLAYER_OBJID;
+        GState->operands[1] = 0x0E;  // NDESCBIT bit
+        opcode_clear_attr();
 
         if (inst->zmachine_state.quit) {
             // we've hit a QUIT opcode, which means, at least for Zork 1, that the user
@@ -742,14 +752,24 @@ static void start_instance(Instance *inst)
         //  game will move the current player there on startup, but we're
         //  resetting dynamic memory between each step here, which wipes
         //  those moves.
+        GState = &inst->zmachine_state;
         for (int j = 0; j < num_players; j++) {
             Player *player = &inst->players[j];
             uint8 *ptr = player->object_table_data;
             ptr[4] = 180;  // parent is West of House room.
             ptr[5] = (j < (num_players-1)) ? (external_mem_objects_base + j + 1) : orig_start_room_child;
             assert(ptr[6] == 0);  // assume player object has no initial children
+
+            // ZORK 1 SPECIFIC MAGIC: mark the player as visible so other players see him.
+            GState->operands[0] = external_mem_objects_base + j;
+            GState->operands[1] = 0x07;  // INVISIBLE bit
+            opcode_clear_attr();
+            GState->operands[0] = external_mem_objects_base + j;
+            GState->operands[1] = 0x0E;  // NDESCBIT bit
+            opcode_clear_attr();
         }
         startroomptr[6] = external_mem_objects_base;  // make players start of child list for start room.
+        GState = NULL;
 
 
         // Run until the READ instruction, then gameplay officially starts.
