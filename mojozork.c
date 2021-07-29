@@ -1023,8 +1023,7 @@ static void opcode_print_ret(void)
 
 static void opcode_print_obj(void)
 {
-    uint8 *ptr = getObjectPtr(GState->operands[0]);
-
+    const uint8 *ptr = getObjectPtr(GState->operands[0]);
     if (GState->header.version <= 3)
     {
         ptr += 7;  // skip to properties field.
