@@ -862,6 +862,14 @@ static void inpfn_ingame(Connection *conn, const char *str)
             broadcast_to_room(inst, player->gvar_location, "\" ***\n>");
         }
     } else {
+        const uint16 loc = player->gvar_location;
+        player->gvar_location = 0;  // so we don't broadcast to ourselves.
+        broadcast_to_room(inst, loc, "\n*** ");
+        broadcast_to_room(inst, loc, player->username);
+        broadcast_to_room(inst, loc, " decides to \"");
+        broadcast_to_room(inst, loc, str);
+        broadcast_to_room(inst, loc, "\" ***\n>");
+        player->gvar_location = loc;
         step_instance(conn->instance, playernum, str);  // run the Z-machine with new input.
     }
 }
