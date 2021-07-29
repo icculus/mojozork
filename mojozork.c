@@ -294,7 +294,7 @@ static void opcode_push(void)
 
 static void opcode_pull(void)
 {
-    uint8 *ptr = varAddress(0, 0);   // top of stack.
+    const uint8 *ptr = varAddress(0, 0);   // top of stack.
     const uint16 val = READUI16(ptr);
     uint8 *store = varAddress((uint8) GState->operands[0], 1);
     WRITEUI16(store, val);
@@ -484,7 +484,7 @@ static void opcode_loadw(void)
     uint16 *store = (uint16 *) varAddress(*(GState->pc++), 1);
     FIXME("can only read from dynamic or static memory (not highmem).");
     FIXME("how does overflow work here? Do these wrap around?");
-    uint16 *src = (uint16 *) (GState->story + (GState->operands[0] + (GState->operands[1] * 2)));
+    const uint16 *src = (uint16 *) (GState->story + (GState->operands[0] + (GState->operands[1] * 2)));
     *store = *src;  // copy from bigendian to bigendian: no byteswap.
 } // opcode_loadw
 
