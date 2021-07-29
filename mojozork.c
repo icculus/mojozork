@@ -613,6 +613,7 @@ static uint8 *getObjectPtrParent(const uint8 *objptr)
     else
     {
         GState->die("write me");
+        return NULL;
     } // else
 } // getGetObjectPtrParent
 
@@ -836,6 +837,7 @@ static uint16 getObjectRelationship(const uint16 objid, const uint8 relationship
         return objptr[relationship];
     else
         GState->die("write me");  // fields are different in ver4+.
+    return 0;
 } // getObjectRelationship
 
 static void opcode_get_parent(void)
