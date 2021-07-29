@@ -342,8 +342,8 @@ static uint8 *getObjectProperty(const uint16 _objid, const uint32 propid, uint8 
             ptr += 7;  // skip to properties address field.
             const uint16 addr = READUI16(ptr);
             ptr = GState->story + addr;
-            ptr += (*ptr * 2) + 1;  // skip object name to start of properties.
         }
+        ptr += (*ptr * 2) + 1;  // skip object name to start of properties.
 
         while (1) {
             const uint8 info = *(ptr++);
