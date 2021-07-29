@@ -6,7 +6,7 @@
 
 Hello sailor!
 
-This is an implementation of Infocom's Z-Machine. The Z-Machine is an virtual
+This is an implementation of Infocom's Z-Machine. The Z-Machine is a virtual
 machine that's something like a high-level CPU. To keep their games portable
 and easier to write, Infocom's games all use this fake processor and ship
 with a platform-specific Z-Machine "emulator" ... so a game could run wherever
