@@ -215,6 +215,17 @@ static void broadcast_to_instance(Instance *inst, const char *str)
         }
     }
 }
+static void broadcast_to_room(Instance *inst, const uint16 room, const char *str)
+{
+    if (inst) {
+        for (size_t i = 0; i < ARRAYSIZE(inst->players); i++) {
+            Player *player = &inst->players[i];
+            if (player->gvar_location == room) {
+                write_to_connection(player->connection, str);
+            }
+        }
+    }
+}
 
 static Player *get_current_player(Instance *inst)
 {
@@ -703,7 +714,7 @@ static void start_instance(Instance *inst)
         write_to_connection(conn, "\n\n");
         write_to_connection(conn, "*** THE GAME IS STARTING ***\n");
         write_to_connection(conn, "You can leave at any time by typing 'quit'.\n");
-        //write_to_connection(conn, "You can speak to others in the same room with '!some text' or the whole game with '!!some text'.\n");
+        write_to_connection(conn, "You can speak to others in the same room with '!some text' or the whole game with '!!some text'.\n");
         write_to_connection(conn, "If you get disconnected or leave, you can rejoin at any time\n");
         write_to_connection(conn, " with this access code: '");
         write_to_connection(conn, player->hash);
@@ -835,6 +846,20 @@ static void inpfn_ingame(Connection *conn, const char *str)
         write_to_connection(conn, "Requests to save the game are ignored, sorry.\n>");
     } else if (strncmp(str, "restore", 7) == 0) {
         write_to_connection(conn, "Requests to restory the game are ignored, sorry.\n>");
+    } else if (str[0] == '!') {
+        if (str[1] == '!') { // broadcast to whole instance
+            broadcast_to_instance(inst, "\n*** ");
+            broadcast_to_instance(inst, player->username);
+            broadcast_to_instance(inst, " says to the whole dungeon, \"");
+            broadcast_to_instance(inst, str + 2);
+            broadcast_to_instance(inst, "\" ***\n>");
+        } else {
+            broadcast_to_room(inst, player->gvar_location, "\n*** ");
+            broadcast_to_room(inst, player->gvar_location, player->username);
+            broadcast_to_room(inst, player->gvar_location, " says to the room, \"");
+            broadcast_to_room(inst, player->gvar_location, str + 1);
+            broadcast_to_room(inst, player->gvar_location, "\" ***\n>");
+        }
     } else {
         step_instance(conn->instance, playernum, str);  // run the Z-machine with new input.
     }
