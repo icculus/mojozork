@@ -803,7 +803,7 @@ static void inpfn_confirm_quit(Connection *conn, const char *str)
         }
     }
 
-    if (strcmp(str, "y") == 0) {
+    if (strcasecmp(str, "y") == 0) {
         if (player != NULL) {
             write_to_connection(conn, "\nOkay, you can come back to this game in progress with this code:\n");
             write_to_connection(conn, "    ");
@@ -839,14 +839,15 @@ static void inpfn_ingame(Connection *conn, const char *str)
         return;
     }
 
-    if ((strcmp(str, "q") == 0) || (strncmp(str, "quit", 4) == 0)) {
+    if ((strcasecmp(str, "q") == 0) || (strncasecmp(str, "quit", 4) == 0)) {
         write_to_connection(conn, "Do you wish to leave the game? (Y is affirmative):");
         conn->inputfn = inpfn_confirm_quit;
-    } else if (strncmp(str, "save", 4) == 0) {
+    } else if (strncasecmp(str, "save", 4) == 0) {
         write_to_connection(conn, "Requests to save the game are ignored, sorry.\n>");
-    } else if (strncmp(str, "restore", 7) == 0) {
+    } else if (strncasecmp(str, "restore", 7) == 0) {
         write_to_connection(conn, "Requests to restory the game are ignored, sorry.\n>");
     } else if (str[0] == '!') {
+        // !!! FIXME: filter to basic ASCII so they can't send terminal escape codes, etc.
         if (str[1] == '!') { // broadcast to whole instance
             broadcast_to_instance(inst, "\n*** ");
             broadcast_to_instance(inst, player->username);
