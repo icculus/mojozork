@@ -400,6 +400,31 @@ static void opcode_get_prop_addr_multizork(void)
     WRITEUI16(store, result);
 }
 
+static void opcode_print_obj_multizork(void)
+{
+    Instance *inst = (Instance *) GState;  // this works because zmachine_state is the first field in Instance.
+    const uint16 external_mem_objects_base = ZORK1_EXTERN_MEM_OBJS_BASE;  // ZORK 1 SPECIFIC MAGIC
+    const uint16 objid = remap_objectid(GState->operands[0]);
+
+    if (GState->header.version <= 3) {
+        const uint8 *ptr;
+        if (objid >= external_mem_objects_base) {  // looking for a multiplayer character
+            const int requested_player = (int) (objid - external_mem_objects_base);
+            if (requested_player >= inst->num_players) {
+                GState->die("Invalid multiplayer object id referenced");
+            }
+            ptr = inst->players[requested_player].property_table_data + 1;
+        } else {
+            ptr = getObjectPtr(GState->operands[0]);
+            ptr += 7;  // skip to properties field.
+            const uint16 addr = READUI16(ptr);  // dereference to get to property table.
+            ptr = GState->story + addr + 1;
+        }
+        print_zscii(ptr, 0);
+    } else {
+        GState->die("write me");
+    }
+}
 
 // When we hit a READ instruction in the Z-Machine, we assume we're back at the
 //  prompt waiting for the user to type their next move. At this point we stop
@@ -512,6 +537,7 @@ static Instance *create_instance(void)
 
         // override some Z-Machine opcode handlers we need...
         GState->opcodes[18].fn = opcode_get_prop_addr_multizork;
+        GState->opcodes[138].fn = opcode_print_obj_multizork;
         GState->opcodes[181].fn = opcode_save_multizork;
         GState->opcodes[182].fn = opcode_restore_multizork;
         GState->opcodes[183].fn = opcode_restart_multizork;
