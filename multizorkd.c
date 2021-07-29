@@ -871,6 +871,17 @@ static void inpfn_ingame(Connection *conn, const char *str)
         broadcast_to_room(inst, loc, "\" ***\n>");
         player->gvar_location = loc;
         step_instance(conn->instance, playernum, str);  // run the Z-machine with new input.
+        const uint16 newloc = player->gvar_location;
+        if (newloc != loc) { // player moved to a new room?
+            player->gvar_location = 0;  // so we don't broadcast to ourselves.
+            broadcast_to_room(inst, loc, "\n*** ");
+            broadcast_to_room(inst, loc, player->username);
+            broadcast_to_room(inst, loc, " has left the area. ***\n>");
+            broadcast_to_room(inst, newloc, "\n*** ");
+            broadcast_to_room(inst, newloc, player->username);
+            broadcast_to_room(inst, newloc, " has entered the area. ***\n>");
+            player->gvar_location = newloc;
+        }
     }
 }
 
