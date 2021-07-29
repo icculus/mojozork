@@ -725,7 +725,7 @@ static void start_instance(Instance *inst)
 
         // Build a custom property table for each player.
         uint8 *propdst = player->property_table_data;
-        propdst++ ;  // text-length (number of 2-byte words). Skip for now.
+        propdst++;  // text-length (number of 2-byte words). Skip for now.
 
         // Encode the player's name to ZSCII. We cheat and only let you have
         // lowercase letters for now (!!! FIXME: but a better ZSCII encoder here would open options)
