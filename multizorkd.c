@@ -777,8 +777,38 @@ static void free_instance(Instance *inst)
     free(inst);
 }
 
+static void inpfn_confirm_quit(Connection *conn, const char *str)
+{
+    // !!! FIXME: can we just put a pointer to the Player in Connection?
+    Instance *inst = conn->instance;
+    Player *player = NULL;
+    int playernum;
+    for (playernum = 0; playernum < inst->num_players; playernum++) {
+        if (inst->players[playernum].connection == conn) {
+            player = &inst->players[playernum];
+            break;
+        }
+    }
+
+    if (strcmp(str, "y") == 0) {
+        if (player != NULL) {
+            write_to_connection(conn, "\nOkay, you can come back to this game in progress with this code:\n");
+            write_to_connection(conn, "    ");
+            write_to_connection(conn, player->hash);
+            write_to_connection(conn, "\n");
+        }
+        write_to_connection(conn, "\n\nGood bye!\n");
+        drop_connection(conn);
+    } else {
+        write_to_connection(conn, "Ok.\n>");
+        conn->inputfn = inpfn_ingame;
+    }
+}
+
+
 static void inpfn_ingame(Connection *conn, const char *str)
 {
+    // !!! FIXME: can we just put a pointer to the Player in Connection?
     Instance *inst = conn->instance;
     Player *player = NULL;
     int playernum;
@@ -796,7 +826,16 @@ static void inpfn_ingame(Connection *conn, const char *str)
         return;
     }
 
-    step_instance(conn->instance, playernum, str);  // run the Z-machine with new input.
+    if ((strcmp(str, "q") == 0) || (strncmp(str, "quit", 4) == 0)) {
+        write_to_connection(conn, "Do you wish to leave the game? (Y is affirmative):");
+        conn->inputfn = inpfn_confirm_quit;
+    } else if (strncmp(str, "save", 4) == 0) {
+        write_to_connection(conn, "Requests to save the game are ignored, sorry.\n>");
+    } else if (strncmp(str, "restore", 7) == 0) {
+        write_to_connection(conn, "Requests to restory the game are ignored, sorry.\n>");
+    } else {
+        step_instance(conn->instance, playernum, str);  // run the Z-machine with new input.
+    }
 }
 
 static void inpfn_waiting_for_players(Connection *conn, const char *str)
