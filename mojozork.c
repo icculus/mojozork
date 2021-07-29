@@ -115,10 +115,10 @@ typedef struct ZMachineState
     Opcode extended_opcodes[30];
 
     void (*writechar)(const int ch);
-    #ifdef _MSC_VER
-    __declspec(noreturn) void (*die)(const char *fmt, ...);
-    #elif defined(__GNUC__) || defined(__clang__)
+    #if defined(__GNUC__) || defined(__clang__)
     void (*die)(const char *fmt, ...) __attribute__((noreturn));
+    #else
+    void (*die)(const char *fmt, ...);
     #endif
 } ZMachineState;
 
@@ -1878,10 +1878,10 @@ static void loadStory(const char *fname)
 
 #ifndef MULTIZORK
 
-#ifdef _MSC_VER
-__declspec(noreturn) static void die(const char *fmt, ...);
-#elif defined(__GNUC__) || defined(__clang__)
+#if defined(__GNUC__) || defined(__clang__)
 static void die(const char *fmt, ...) __attribute__((noreturn));
+#elif defined(_MSC_VER)
+__declspec(noreturn) static void die(const char *fmt, ...);
 #endif
 
 static void die(const char *fmt, ...)

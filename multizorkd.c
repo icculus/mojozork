@@ -447,11 +447,12 @@ static void opcode_quit_multizork(void)
 // this is called by the Z-machine when there's a fatal error. Mojozork just terminates here,
 //  but we need to survive and terminate just the one instance instead of the entire server.
 //  So we longjmp back to step_instance() and clean up.
-#ifdef _MSC_VER
-__declspec(noreturn) static void die_multizork(const char *fmt, ...);
-#elif defined(__GNUC__) || defined(__clang__)
+#if defined(__GNUC__) || defined(__clang__)
 static void die_multizork(const char *fmt, ...) __attribute__((noreturn));
+#elif defined(_MSC_VER)
+__declspec(noreturn) static void die_multizork(const char *fmt, ...);
 #endif
+
 static void die_multizork(const char *fmt, ...)
 {
     Instance *inst = (Instance *) GState;
