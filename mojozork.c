@@ -785,7 +785,7 @@ static void opcode_get_prop_len(void)
     } // else
 
     WRITEUI16(store, result);
-} // opcode_get_prop_size
+} // opcode_get_prop_len
 
 static void opcode_get_next_prop(void)
 {
