@@ -671,6 +671,8 @@ static void start_instance(Instance *inst)
         Player *player = &inst->players[i];
         Connection *conn = player->connection;
 
+        snprintf(player->username, sizeof (player->username), "%s", conn->username);
+
         // Copy the original player object for each player.
         memcpy(player->object_table_data, playerptr, sizeof (player->object_table_data));
 
