@@ -339,21 +339,6 @@ static uint8 *getObjectProperty(const uint16 _objid, const uint32 propid, uint8 
 // See notes on getObjectPointer(); make sure this messes with the right object.
 static void unparentObject(const uint16 _objid)
 {
-#if 0
-    Instance *inst = (Instance *) GState;  // this works because zmachine_state is the first field in Instance.
-    const uint16 external_mem_objects_base = ZORK1_EXTERN_MEM_OBJS_BASE;  // ZORK 1 SPECIFIC MAGIC
-    const uint16 altobjid = (objid == ZORK1_PLAYER_OBJID) ? (external_mem_objects_base + inst->current_player) : objid;
-    uint8 *objptr = getObjectPtr(objid);
-    uint8 *parentptr = getObjectPtrParent(objptr);
-    if (parentptr != NULL) {  // if NULL, no need to remove it.
-loginfo("UNPARENT %d from %d", (int) objid, (int) objptr[4]);
-        uint8 *ptr = parentptr + 6;  // 4 to skip attrs, 2 to skip to child.
-        while ((*ptr != objid) && (*ptr != altobjid)) { // if not direct child, look through sibling list...
-            ptr = getObjectPtr(*ptr) + 5;  // get sibling field.
-        }
-        *ptr = *(objptr + 5);  // obj sibling takes obj's place.
-    }
-#else
     uint16 objid = _objid;  // unconst it.
     Instance *inst = (Instance *) GState;  // this works because zmachine_state is the first field in Instance.
     const uint16 external_mem_objects_base = ZORK1_EXTERN_MEM_OBJS_BASE;  // ZORK 1 SPECIFIC MAGIC
@@ -364,14 +349,12 @@ loginfo("UNPARENT %d from %d", (int) objid, (int) objptr[4]);
     uint8 *objptr = getObjectPtr(objid);
     uint8 *parentptr = getObjectPtrParent(objptr);
     if (parentptr != NULL) {  // if NULL, no need to remove it.
-loginfo("UNPARENT %d from %d", (int) objid, (int) objptr[4]);
         uint8 *ptr = parentptr + 6;  // 4 to skip attrs, 2 to skip to child.
         while (*ptr != objid) { // if not direct child, look through sibling list...
             ptr = getObjectPtr(*ptr) + 5;  // get sibling field.
         }
         *ptr = *(objptr + 5);  // obj sibling takes obj's place.
     }
-#endif
 }
 
 static void writechar_multizork(const int ch)
@@ -388,9 +371,6 @@ static void opcode_insert_obj_multizork(void)
     Instance *inst = (Instance *) GState;  // this works because zmachine_state is the first field in Instance.
     uint16 objid = GState->operands[0];
     const uint16 dstid = GState->operands[1];
-#ifdef MULTIZORK
-loginfo("INSERT %d into %d", (int) objid, (int) dstid);
-#endif
     const uint16 external_mem_objects_base = ZORK1_EXTERN_MEM_OBJS_BASE;  // ZORK 1 SPECIFIC MAGIC
     if (objid == ZORK1_PLAYER_OBJID) {  // ZORK 1 SPECIFIC MAGIC
         objid = external_mem_objects_base + inst->current_player;
@@ -700,12 +680,6 @@ static int step_instance(Instance *inst, const int playernum, const char *input)
     // some "globals" are player-specific, so we swap them in before running.
     globals[0] = player->gvar_location;
 
-const uint8 *ptr = getObjectPtr(180) + 6;  // 4 to skip attrs, 2 to skip to child.
-while (*ptr != 0) {
-    loginfo("START OF STEP ROOM 180 child: %d", (int) *ptr);
-    ptr = getObjectPtr(*ptr) + 5;  // get sibling field.
-}
-
     // If user had hit a READ instruction. Write the user's
     //  input to Z-Machine memory, and tokenize it.
     if (player->next_inputbuf) {
@@ -767,13 +741,6 @@ while (*ptr != 0) {
         free_instance(inst);
         retval = 0;
     }
-
-ptr = getObjectPtr(180) + 6;  // 4 to skip attrs, 2 to skip to child.
-while (*ptr != 0) {
-    loginfo("END OF STEP ROOM 180 child: %d", (int) *ptr);
-    ptr = getObjectPtr(*ptr) + 5;  // get sibling field.
-}
-
 
     GState = NULL;
     return retval;
