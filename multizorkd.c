@@ -1664,6 +1664,7 @@ static Player *reconnect_player(Connection *conn, const char *access_code)
                         return NULL;
                     }
                     player->connection = conn;   // just wire right back in and go.
+                    conn->instance = inst;
                     conn->inputfn = inpfn_ingame;
                     return player;
                 }
@@ -1699,6 +1700,7 @@ static Player *reconnect_player(Connection *conn, const char *access_code)
             assert(player->connection == NULL);
             player->connection = conn;   // just wire right back in and go.
             conn->inputfn = inpfn_ingame;
+            conn->instance = inst;
             inst->started = 1;
             return player;
         }
