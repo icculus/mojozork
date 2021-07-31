@@ -23,6 +23,8 @@
 #include <setjmp.h>
 #include <assert.h>
 
+#include "sqlite3.h"
+
 #define MULTIZORK 1
 #include "mojozork.c"
 
@@ -49,17 +51,6 @@ static time_t GNow = 0;
 static const char *GOriginalStoryName = NULL;
 static uint8 *GOriginalStory = NULL;
 static uint32 GOriginalStoryLen = 0;
-
-static void generate_unique_hash(char *hash)  // `hash` points to up to 8 bytes of space.
-{
-    // this is kinda cheesy, but it's good enough.
-    static const char chartable[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-    for (size_t i = 0; i < 6; i++) {
-        hash[i] = chartable[((size_t) random()) % (sizeof (chartable)-1)];
-    }
-    hash[6] = '\0';
-    // !!! FIXME: make sure this isn't a duplicate.
-}
 
 static void loginfo(const char *fmt, ...)
 {
@@ -100,6 +91,7 @@ typedef enum ConnectionState
 typedef struct Player
 {
     Connection *connection;  // null if user is disconnected; player lives on.
+    sqlite3_int64 dbid;
     char username[16];
     char hash[8];
     uint32 next_logical_pc;  // next step_instance() should run this player from this z-machine program counter.
@@ -116,12 +108,13 @@ typedef struct Player
     uint16 gvar_coffin_held;
     uint16 gvar_dead;
     uint16 gvar_deaths;
-    // !!! FIXME: several more
+    // !!! FIXME: several more, probably.
 } Player;
 
 typedef struct Instance
 {
     ZMachineState zmachine_state;
+    sqlite3_int64 dbid;
     int started;
     char hash[8];
     Player players[4];
@@ -152,6 +145,480 @@ struct Connection
 static Connection **connections = NULL;
 static size_t num_connections = 0;
 
+
+
+#define MULTIZORK_DATABASE_PATH "multizork.sqlite3"
+
+#define SQL_CREATE_TABLES \
+    "create table if not exists instances (" \
+    " id integer primary key," \
+    " hashid text not null unique," \
+    " num_players integer unsigned not null," \
+    " starttime integer unsigned not null," \
+    " savetime integer unsigned not null," \
+    " instructions_run integer unsigned not null," \
+    " dynamic_memory blob not null," \
+    " story_filename text not null" \
+    ");" \
+    " " \
+    "create index if not exists instance_index on instances (hashid);" \
+    " " \
+    "create table if not exists players (" \
+    " id integer primary key," \
+    " hashid text not null unique," \
+    " instance integer not null," \
+    " username text not null," \
+    " next_logical_pc integer unsigned not null," \
+    " next_logical_sp integer unsigned not null," \
+    " next_logical_bp integer unsigned not null," \
+    " next_logical_inputbuf integer unsigned not null," \
+    " next_logical_inputbuflen integer unsigned not null," \
+    " next_operands_1 integer unsigned not null," \
+    " next_operands_2 integer unsigned not null," \
+    " stack blob not null," \
+    " object_table_data blob not null," \
+    " property_table_data blob not null," \
+    " gvar_location integer unsigned not null," \
+    " gvar_coffin_held integer unsigned not null," \
+    " gvar_dead integer unsigned not null," \
+    " gvar_deaths integer unsigned not null" \
+    /* !!! FIXME: several more, probably. */ \
+    ");" \
+    " " \
+    "create index if not exists players_index on players (hashid);" \
+    " " \
+    "create table if not exists transcripts (" \
+    " id integer primary key," \
+    " timestamp integer unsigned not null," \
+    " player integer not null," \
+    " isinput integer not null," \
+    " content text not null" \
+    ");" \
+    " " \
+    "create index if not exists transcript_index on transcripts (player);" \
+    " " \
+    "create table if not exists used_hashes (" \
+    " hashid text not null unique" \
+    ");" \
+    " " \
+    "create index if not exists used_hashes_index on used_hashes (hashid);" \
+
+#define SQL_TRANSCRIPT_INSERT \
+    "insert into transcripts (timestamp, player, isinput, content) values ($1, $2, $3, $4);"
+
+#define SQL_USED_HASH_INSERT \
+    "insert into used_hashes (hashid) values ($1);"
+
+#define SQL_INSTANCE_INSERT \
+    "insert into instances (hashid, num_players, starttime, savetime, instructions_run, dynamic_memory, story_filename) values ($1, $2, $3, $4, $5, $6, $7);"
+
+#define SQL_INSTANCE_UPDATE \
+    "update instances set savetime=$1, instructions_run=$2, dynamic_memory=$3 where id=$4 limit 1;"
+
+#define SQL_INSTANCE_SELECT \
+    "select hashid, num_players, instructions_run, dynamic_memory from instances where id=$1 limit 1;"
+
+#define SQL_PLAYER_INSERT \
+    "insert into players (hashid, instance, username, next_logical_pc, next_logical_sp, next_logical_bp," \
+    " next_logical_inputbuf, next_logical_inputbuflen, next_operands_1, next_operands_2, stack," \
+    " object_table_data, property_table_data, gvar_location, gvar_coffin_held, gvar_dead, gvar_deaths" \
+    ") values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17);"
+
+#define SQL_PLAYER_UPDATE \
+    "update players set" \
+    " next_logical_pc = $1, next_logical_sp = $2, next_logical_bp = $3," \
+    " next_logical_inputbuf = $4, next_logical_inputbuflen = $5, next_operands_1 = $6, next_operands_2 = $7, stack = $8," \
+    " object_table_data = $9, property_table_data = $10, gvar_location = $11, gvar_coffin_held = $12, gvar_dead = $13, gvar_deaths = $14" \
+    " where id=$15 limit 1;"
+
+#define SQL_FIND_INSTANCE_BY_PLAYER_HASH \
+    "select instance from players where hashid=$1 limit 1;"
+
+#define SQL_PLAYERS_SELECT \
+    "select id, hashid, username, next_logical_pc, next_logical_sp, next_logical_bp," \
+    " next_logical_inputbuf, next_logical_inputbuflen, next_operands_1, next_operands_2," \
+    " stack, object_table_data, property_table_data," \
+    " gvar_location, gvar_coffin_held, gvar_dead, gvar_deaths from players where instance=$1 order by id limit $2;"
+
+#define SQL_RECAP_SELECT \
+    "select content from transcripts where player=$1 order by id limit $2;"
+
+
+static sqlite3 *GDatabase = NULL;
+static sqlite3_stmt *GStmtBegin = NULL;
+static sqlite3_stmt *GStmtCommit = NULL;
+static sqlite3_stmt *GStmtTranscriptInsert = NULL;
+static sqlite3_stmt *GStmtUsedHashInsert = NULL;
+static sqlite3_stmt *GStmtInstanceInsert = NULL;
+static sqlite3_stmt *GStmtInstanceUpdate = NULL;
+static sqlite3_stmt *GStmtInstanceSelect = NULL;
+static sqlite3_stmt *GStmtPlayerInsert = NULL;
+static sqlite3_stmt *GStmtPlayerUpdate = NULL;
+static sqlite3_stmt *GStmtFindInstanceByPlayerHash = NULL;
+static sqlite3_stmt *GStmtPlayersSelect = NULL;
+static sqlite3_stmt *GStmtRecapSelect = NULL;
+
+static void db_log_error(const char *what)
+{
+    loginfo("DBERROR: failed to %s! (%s)", what, sqlite3_errmsg(GDatabase));
+}
+
+static int db_set_transaction(sqlite3_stmt *stmt, const char *what)
+{
+    if ((sqlite3_reset(stmt) != SQLITE_OK) || (sqlite3_step(stmt) != SQLITE_DONE)) {
+        db_log_error(what);
+        return 0;
+    }
+    return 1;
+}
+
+static int db_begin_transaction(void)
+{
+    return db_set_transaction(GStmtBegin, "begin sqlite3 transaction");
+}
+
+static int db_end_transaction(void)
+{
+    return db_set_transaction(GStmtCommit, "commit sqlite3 transaction");
+}
+
+static sqlite3_int64 db_insert_transcript(const sqlite3_int64 player_dbid, const int isinput, const char *content)
+{
+    //"insert into transcripts (timestamp, player, isinput, content) values ($1, $2, $3, $4);"
+    const sqlite3_int64 retval =
+           ( (sqlite3_reset(GStmtTranscriptInsert) == SQLITE_OK) &&
+             (sqlite3_bind_int64(GStmtTranscriptInsert, 1, (sqlite3_int64) GNow) == SQLITE_OK) &&
+             (sqlite3_bind_int64(GStmtTranscriptInsert, 2, player_dbid) == SQLITE_OK) &&
+             (sqlite3_bind_int(GStmtTranscriptInsert, 3, isinput) == SQLITE_OK) &&
+             (sqlite3_bind_text(GStmtTranscriptInsert, 4, content, -1, SQLITE_TRANSIENT) == SQLITE_OK) &&
+             (sqlite3_step(GStmtTranscriptInsert) == SQLITE_DONE) ) ? sqlite3_last_insert_rowid(GDatabase) : 0;
+    if (!retval) { db_log_error("insert transcript"); }
+    return retval;
+}
+
+static sqlite3_int64 db_insert_used_hash(const char *hashid)
+{
+    //"insert into used_hashes (hashid) values ($1);"
+    const sqlite3_int64 retval =
+           ( (sqlite3_reset(GStmtUsedHashInsert) == SQLITE_OK) &&
+             (sqlite3_bind_text(GStmtUsedHashInsert, 1, hashid, -1, SQLITE_TRANSIENT) == SQLITE_OK) &&
+             (sqlite3_step(GStmtUsedHashInsert) == SQLITE_DONE) ) ? sqlite3_last_insert_rowid(GDatabase) : 0;
+    if (!retval) { db_log_error("insert used hash"); }
+    return retval;
+}
+
+static sqlite3_int64 db_insert_instance(const Instance *inst)
+{
+    //"insert into instances (hashid, num_players, starttime, savetime, instructions_run, dynamic_memory, story_filename) values ($1, $2, $3, $4, $5, $6, $7);"
+    const sqlite3_int64 retval =
+           ( (sqlite3_reset(GStmtInstanceInsert) == SQLITE_OK) &&
+             (sqlite3_bind_text(GStmtInstanceInsert, 1, inst->hash, -1, SQLITE_TRANSIENT) == SQLITE_OK) &&
+             (sqlite3_bind_int(GStmtInstanceInsert, 2, inst->num_players) == SQLITE_OK) &&
+             (sqlite3_bind_int64(GStmtInstanceInsert, 3, (sqlite3_int64) GNow) == SQLITE_OK) &&
+             (sqlite3_bind_int64(GStmtInstanceInsert, 4, (sqlite3_int64) GNow) == SQLITE_OK) &&
+             (sqlite3_bind_int64(GStmtInstanceInsert, 5, (sqlite3_int64) inst->zmachine_state.instructions_run) == SQLITE_OK) &&
+             (sqlite3_bind_blob(GStmtInstanceInsert, 6, inst->zmachine_state.story, inst->zmachine_state.header.staticmem_addr, SQLITE_TRANSIENT) == SQLITE_OK) &&
+             (sqlite3_bind_text(GStmtInstanceInsert, 7, inst->zmachine_state.story_filename, -1, SQLITE_TRANSIENT) == SQLITE_OK) &&
+             (sqlite3_step(GStmtInstanceInsert) == SQLITE_DONE) ) ? sqlite3_last_insert_rowid(GDatabase) : 0;
+    if (!retval) { db_log_error("insert instance"); }
+    return retval;
+}
+
+static int db_update_instance(const Instance *inst)
+{
+    //"update instances set savetime=$1, instructions_run=$2, dynamic_memory=$3 where id=$4 limit 1;"
+    assert(inst->dbid != 0);
+    const int retval =
+           ( (sqlite3_reset(GStmtInstanceUpdate) == SQLITE_OK) &&
+             (sqlite3_bind_int64(GStmtInstanceUpdate, 1, (sqlite3_int64) GNow) == SQLITE_OK) &&
+             (sqlite3_bind_int64(GStmtInstanceUpdate, 2, (sqlite3_int64) inst->zmachine_state.instructions_run) == SQLITE_OK) &&
+             (sqlite3_bind_blob(GStmtInstanceUpdate, 3, inst->zmachine_state.story, inst->zmachine_state.header.staticmem_addr, SQLITE_TRANSIENT) == SQLITE_OK) &&
+             (sqlite3_bind_int64(GStmtInstanceUpdate, 4, (sqlite3_int64) inst->dbid) == SQLITE_OK) &&
+             (sqlite3_step(GStmtInstanceUpdate) == SQLITE_DONE) ) ? 1 : 0;
+    if (!retval) { db_log_error("update instance"); }
+    return retval;
+}
+
+static sqlite3_int64 db_insert_player(const Instance *inst, const int playernum)
+{
+    //"insert into players (hashid, instance, username, next_logical_pc, next_logical_sp, next_logical_bp,"
+    //" next_logical_inputbuf, next_logical_inputbuflen, next_operands_1, next_operands_2, stack,"
+    //" object_table_data, property_table_data, gvar_location, gvar_coffin_held, gvar_dead, gvar_deaths"
+    //") values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17);"
+    const Player *player = &inst->players[playernum];
+    assert(player->dbid == 0);
+    
+    const sqlite3_int64 retval =
+           ( (sqlite3_reset(GStmtPlayerInsert) == SQLITE_OK) &&
+             (sqlite3_bind_text(GStmtPlayerInsert, 1, player->hash, -1, SQLITE_TRANSIENT) == SQLITE_OK) &&
+             (sqlite3_bind_int64(GStmtPlayerInsert, 2, inst->dbid) == SQLITE_OK) &&
+             (sqlite3_bind_text(GStmtPlayerInsert, 3, player->username, -1, SQLITE_TRANSIENT) == SQLITE_OK) &&
+             (sqlite3_bind_int(GStmtPlayerInsert, 4, (int) player->next_logical_pc) == SQLITE_OK) &&
+             (sqlite3_bind_int(GStmtPlayerInsert, 5, (int) player->next_logical_sp) == SQLITE_OK) &&
+             (sqlite3_bind_int(GStmtPlayerInsert, 6, (int) player->next_logical_bp) == SQLITE_OK) &&
+             (sqlite3_bind_int(GStmtPlayerInsert, 7, player->next_inputbuf ? ((int) (player->next_inputbuf - inst->zmachine_state.story)) : 0) == SQLITE_OK) &&
+             (sqlite3_bind_int(GStmtPlayerInsert, 8, player->next_inputbuflen) == SQLITE_OK) &&
+             (sqlite3_bind_int(GStmtPlayerInsert, 9, (int) player->next_operands[0]) == SQLITE_OK) &&
+             (sqlite3_bind_int(GStmtPlayerInsert, 10, (int) player->next_operands[1]) == SQLITE_OK) &&
+             (sqlite3_bind_blob(GStmtPlayerInsert, 11, player->stack, player->next_logical_sp * 2, SQLITE_TRANSIENT) == SQLITE_OK) &&
+             (sqlite3_bind_blob(GStmtPlayerInsert, 12, player->object_table_data, sizeof (player->object_table_data), SQLITE_TRANSIENT) == SQLITE_OK) &&
+             (sqlite3_bind_blob(GStmtPlayerInsert, 13, player->property_table_data, sizeof (player->property_table_data), SQLITE_TRANSIENT) == SQLITE_OK) &&
+             (sqlite3_bind_int(GStmtPlayerInsert, 14, (int) player->gvar_location) == SQLITE_OK) &&
+             (sqlite3_bind_int(GStmtPlayerInsert, 15, (int) player->gvar_coffin_held) == SQLITE_OK) &&
+             (sqlite3_bind_int(GStmtPlayerInsert, 16, (int) player->gvar_dead) == SQLITE_OK) &&
+             (sqlite3_bind_int(GStmtPlayerInsert, 17, (int) player->gvar_deaths) == SQLITE_OK) &&
+             (sqlite3_step(GStmtPlayerInsert) == SQLITE_DONE) ) ? sqlite3_last_insert_rowid(GDatabase) : 0;
+    if (!retval) { db_log_error("insert player"); }
+    return retval;
+}
+
+static int db_update_player(const Instance *inst, const int playernum)
+{
+    //"update players set"
+    //" next_logical_pc = $1, next_logical_sp = $2, next_logical_bp = $3,"
+    //" next_logical_inputbuf = $4, next_logical_inputbuflen = $5, next_operands_1 = $6, next_operands_2 = $7, stack = $8,"
+    //" object_table_data = $9, property_table_data = $10, gvar_location = $11, gvar_coffin_held = $12, gvar_dead = $13, gvar_deaths = $14"
+    //" where id=$15 limit 1;"
+    const Player *player = &inst->players[playernum];
+    assert(player->dbid != 0);
+    const int retval =
+           ( (sqlite3_reset(GStmtPlayerUpdate) == SQLITE_OK) &&
+             (sqlite3_bind_int(GStmtPlayerUpdate, 1, (int) player->next_logical_pc) == SQLITE_OK) &&
+             (sqlite3_bind_int(GStmtPlayerUpdate, 2, (int) player->next_logical_sp) == SQLITE_OK) &&
+             (sqlite3_bind_int(GStmtPlayerUpdate, 3, (int) player->next_logical_bp) == SQLITE_OK) &&
+             (sqlite3_bind_int(GStmtPlayerUpdate, 4, player->next_inputbuf ? ((int) (player->next_inputbuf - inst->zmachine_state.story)) : 0) == SQLITE_OK) &&
+             (sqlite3_bind_int(GStmtPlayerUpdate, 5, player->next_inputbuflen) == SQLITE_OK) &&
+             (sqlite3_bind_int(GStmtPlayerUpdate, 6, (int) player->next_operands[0]) == SQLITE_OK) &&
+             (sqlite3_bind_int(GStmtPlayerUpdate, 7, (int) player->next_operands[1]) == SQLITE_OK) &&
+             (sqlite3_bind_blob(GStmtPlayerUpdate, 8, player->stack, player->next_logical_sp * 2, SQLITE_TRANSIENT) == SQLITE_OK) &&
+             (sqlite3_bind_blob(GStmtPlayerUpdate, 9, player->object_table_data, sizeof (player->object_table_data), SQLITE_TRANSIENT) == SQLITE_OK) &&
+             (sqlite3_bind_blob(GStmtPlayerUpdate, 10, player->property_table_data, sizeof (player->property_table_data), SQLITE_TRANSIENT) == SQLITE_OK) &&
+             (sqlite3_bind_int(GStmtPlayerUpdate, 11, (int) player->gvar_location) == SQLITE_OK) &&
+             (sqlite3_bind_int(GStmtPlayerUpdate, 12, (int) player->gvar_coffin_held) == SQLITE_OK) &&
+             (sqlite3_bind_int(GStmtPlayerUpdate, 13, (int) player->gvar_dead) == SQLITE_OK) &&
+             (sqlite3_bind_int(GStmtPlayerUpdate, 14, (int) player->gvar_deaths) == SQLITE_OK) &&
+             (sqlite3_bind_int64(GStmtPlayerUpdate, 15, inst->dbid) == SQLITE_OK) &&
+             (sqlite3_step(GStmtPlayerUpdate) == SQLITE_DONE) ) ? 1 : 0;
+    if (!retval) { db_log_error("update player"); }
+    return retval;
+}
+
+static sqlite3_int64 db_find_instance_by_player_hash(const char *hashid)
+{
+    //"select instance from players where hashid=$1 limit 1;"
+    int rc;
+    if ( (sqlite3_reset(GStmtFindInstanceByPlayerHash) != SQLITE_OK) ||
+         (sqlite3_bind_text(GStmtFindInstanceByPlayerHash, 1, hashid, -1, SQLITE_TRANSIENT) != SQLITE_OK) ||
+         ((rc = sqlite3_step(GStmtFindInstanceByPlayerHash)) != SQLITE_ROW) ) {
+        if (rc != SQLITE_DONE) { db_log_error("select instance by player hash"); }
+        return 0;  // error or not found.
+    }
+    return sqlite3_column_int64(GStmtFindInstanceByPlayerHash, 0);
+}
+
+static int db_select_instance(Instance *inst, const sqlite3_int64 dbid)
+{
+    // this should be a fresh object returned create_instance() that we will update with database info.
+    assert(!inst->started);
+    assert(!inst->dbid);
+
+    //"select hashid, num_players, instructions_run, dynamic_memory from instances where id=$1 limit 1;"
+    int rc;
+    if ( (sqlite3_reset(GStmtInstanceSelect) != SQLITE_OK) ||
+         (sqlite3_bind_int64(GStmtInstanceSelect, 1, dbid) != SQLITE_OK) ||
+         ((rc = sqlite3_step(GStmtInstanceSelect)) != SQLITE_ROW) ) {
+        if (rc != SQLITE_DONE) { db_log_error("select instance"); }
+        return 0;  // error or not found.
+    }
+
+    inst->dbid = dbid;
+    snprintf(inst->hash, sizeof (inst->hash), "%s", sqlite3_column_text(GStmtInstanceSelect, 0));
+    inst->num_players = sqlite3_column_int(GStmtInstanceSelect, 1);
+    inst->zmachine_state.instructions_run = (uint32) sqlite3_column_int64(GStmtInstanceSelect, 2);
+    const void *dynmem = sqlite3_column_blob(GStmtInstanceSelect, 3);
+    size_t dynmemlen = sqlite3_column_bytes(GStmtInstanceSelect, 3);
+    assert(dynmemlen == ((size_t) inst->zmachine_state.header.staticmem_addr));
+    if ( ((size_t) inst->zmachine_state.header.staticmem_addr) < dynmemlen ) {
+        dynmemlen = (size_t) inst->zmachine_state.header.staticmem_addr;
+    }
+    memcpy(inst->zmachine_state.story, dynmem, dynmemlen);
+    sqlite3_reset(GStmtInstanceSelect);
+
+    //"select id, hashid, username, next_logical_pc, next_logical_sp, next_logical_bp,"
+    //" next_logical_inputbuf, next_logical_inputbuflen, next_operands_1, next_operands_2,"
+    //" stack, object_table_data, property_table_data,"
+    //" gvar_location, gvar_coffin_held, gvar_dead, gvar_deaths from players where instance=$1 order by id limit $2;"
+    if ( (sqlite3_reset(GStmtPlayersSelect) != SQLITE_OK) ||
+         (sqlite3_bind_int64(GStmtPlayersSelect, 1, dbid) != SQLITE_OK) ||
+         (sqlite3_bind_int(GStmtPlayersSelect, 2, inst->num_players) != SQLITE_OK) ) {
+        db_log_error("select players");
+        return 0;
+    }
+
+    int num_players = 0;
+    while (sqlite3_step(GStmtPlayersSelect) == SQLITE_ROW) {
+        assert(num_players < inst->num_players);
+        Player *player = &inst->players[num_players];
+        player->connection = NULL;
+        player->dbid = sqlite3_column_int(GStmtPlayersSelect, 0);
+        snprintf(player->hash, sizeof (player->hash), "%s", sqlite3_column_text(GStmtPlayersSelect, 1));
+        snprintf(player->username, sizeof (player->username), "%s", sqlite3_column_text(GStmtPlayersSelect, 2));
+        player->next_logical_pc = (uint32) sqlite3_column_int(GStmtPlayersSelect, 3);
+        player->next_logical_sp = (uint32) sqlite3_column_int(GStmtPlayersSelect, 4);
+        player->next_logical_bp = (uint32) sqlite3_column_int(GStmtPlayersSelect, 5);
+        player->next_inputbuf = inst->zmachine_state.story + ((size_t) sqlite3_column_int(GStmtPlayersSelect, 6));
+        player->next_inputbuflen = (uint8) sqlite3_column_int(GStmtPlayersSelect, 7);
+        player->next_operands[0] = (uint16) sqlite3_column_int(GStmtPlayersSelect, 8);
+        player->next_operands[1] = (uint16) sqlite3_column_int(GStmtPlayersSelect, 9);
+        memcpy(player->stack, sqlite3_column_blob(GStmtPlayersSelect, 10), player->next_logical_sp * 2);
+        memcpy(player->object_table_data, sqlite3_column_blob(GStmtPlayersSelect, 11), sizeof (player->object_table_data));
+        memcpy(player->property_table_data, sqlite3_column_blob(GStmtPlayersSelect, 12), sizeof (player->property_table_data));
+        player->gvar_location = (uint16) sqlite3_column_int(GStmtPlayersSelect, 13);
+        player->gvar_coffin_held = (uint16) sqlite3_column_int(GStmtPlayersSelect, 14);
+        player->gvar_dead = (uint16) sqlite3_column_int(GStmtPlayersSelect, 15);
+        player->gvar_deaths = (uint16) sqlite3_column_int(GStmtPlayersSelect, 16);
+        num_players++;
+    }
+
+    sqlite3_reset(GStmtPlayersSelect);
+
+    if (num_players != inst->num_players) {
+        loginfo("Uhoh, instance '%s' has %d players in the database, should be %d!", inst->hash, num_players, inst->num_players);
+        return 0;
+    }
+
+    return 1;
+}
+
+static void write_to_connection(Connection *conn, const char *str);
+
+static int db_select_recap(Player *player, const int rows_of_recap)
+{
+    Connection *conn = player->connection;
+    if (!conn) {
+        return 0;
+    }
+
+    //"select isinput, content from transcripts where player=$1 order by id limit $2;"
+    if ( (sqlite3_reset(GStmtRecapSelect) != SQLITE_OK) ||
+         (sqlite3_bind_int64(GStmtRecapSelect, 1, player->dbid) != SQLITE_OK) ||
+         (sqlite3_bind_int(GStmtRecapSelect, 2, rows_of_recap) != SQLITE_OK) ) {
+        db_log_error("select recap");
+        return 0;
+    }
+
+    while (sqlite3_step(GStmtRecapSelect) == SQLITE_ROW) {
+        write_to_connection(conn, (const char *) sqlite3_column_text(GStmtRecapSelect, 0));
+    }
+
+    sqlite3_reset(GStmtRecapSelect);
+    return 1;
+}
+
+
+static void db_init(void)
+{
+    char *errmsg = NULL;
+
+    if (sqlite3_initialize() != SQLITE_OK) {
+        panic("sqlite3_initialize failed!");
+    }
+
+    if (sqlite3_open(MULTIZORK_DATABASE_PATH, &GDatabase) != SQLITE_OK) {
+        panic("Couldn't open '%s'!", MULTIZORK_DATABASE_PATH);
+    }
+
+    if (sqlite3_exec(GDatabase, SQL_CREATE_TABLES, NULL, NULL, &errmsg) != SQLITE_OK) {
+        panic("Couldn't create database tables! %s", errmsg);
+    }
+
+    if (sqlite3_prepare_v2(GDatabase, "begin transaction;", -1, &GStmtBegin, NULL) != SQLITE_OK) {
+        panic("Failed to create BEGIN TRANSACTION SQL statement! %s", sqlite3_errmsg(GDatabase));
+    }
+
+    if (sqlite3_prepare_v2(GDatabase, "end transaction;", -1, &GStmtCommit, NULL) != SQLITE_OK) {
+        panic("Failed to create END TRANSACTION SQL statement! %s", sqlite3_errmsg(GDatabase));
+    }
+
+    if (sqlite3_prepare_v2(GDatabase, SQL_TRANSCRIPT_INSERT, -1, &GStmtTranscriptInsert, NULL) != SQLITE_OK) {
+        panic("Failed to create transcript insert SQL statement! %s", sqlite3_errmsg(GDatabase));
+    }
+
+    if (sqlite3_prepare_v2(GDatabase, SQL_USED_HASH_INSERT, -1, &GStmtUsedHashInsert, NULL) != SQLITE_OK) {
+        panic("Failed to create used hash insert SQL statement! %s", sqlite3_errmsg(GDatabase));
+    }
+
+    if (sqlite3_prepare_v2(GDatabase, SQL_INSTANCE_INSERT, -1, &GStmtInstanceInsert, NULL) != SQLITE_OK) {
+        panic("Failed to create instance insert SQL statement! %s", sqlite3_errmsg(GDatabase));
+    }
+
+    if (sqlite3_prepare_v2(GDatabase, SQL_INSTANCE_UPDATE, -1, &GStmtInstanceUpdate, NULL) != SQLITE_OK) {
+        panic("Failed to create instance update SQL statement! %s", sqlite3_errmsg(GDatabase));
+    }
+
+    if (sqlite3_prepare_v2(GDatabase, SQL_INSTANCE_SELECT, -1, &GStmtInstanceSelect, NULL) != SQLITE_OK) {
+        panic("Failed to create instance select SQL statement! %s", sqlite3_errmsg(GDatabase));
+    }
+
+    if (sqlite3_prepare_v2(GDatabase, SQL_PLAYER_INSERT, -1, &GStmtPlayerInsert, NULL) != SQLITE_OK) {
+        panic("Failed to create player insert SQL statement! %s", sqlite3_errmsg(GDatabase));
+    }
+
+    if (sqlite3_prepare_v2(GDatabase, SQL_PLAYER_UPDATE, -1, &GStmtPlayerUpdate, NULL) != SQLITE_OK) {
+        panic("Failed to create player update SQL statement! %s", sqlite3_errmsg(GDatabase));
+    }
+
+    if (sqlite3_prepare_v2(GDatabase, SQL_FIND_INSTANCE_BY_PLAYER_HASH, -1, &GStmtFindInstanceByPlayerHash, NULL) != SQLITE_OK) {
+        panic("Failed to create find-instance-by-player-hash SQL statement! %s", sqlite3_errmsg(GDatabase));
+    }
+
+    if (sqlite3_prepare_v2(GDatabase, SQL_PLAYERS_SELECT, -1, &GStmtPlayersSelect, NULL) != SQLITE_OK) {
+        panic("Failed to create select players SQL statement! %s", sqlite3_errmsg(GDatabase));
+    }
+
+    if (sqlite3_prepare_v2(GDatabase, SQL_RECAP_SELECT, -1, &GStmtRecapSelect, NULL) != SQLITE_OK) {
+        panic("Failed to create select recap SQL statement! %s", sqlite3_errmsg(GDatabase));
+    }
+}
+
+static void db_quit(void)
+{
+    #define FINALIZE_DB_STMT(x) if (x) { sqlite3_finalize(x); x = NULL; }
+    FINALIZE_DB_STMT(GStmtBegin);
+    FINALIZE_DB_STMT(GStmtCommit);
+    FINALIZE_DB_STMT(GStmtTranscriptInsert);
+    FINALIZE_DB_STMT(GStmtUsedHashInsert);
+    FINALIZE_DB_STMT(GStmtInstanceInsert);
+    FINALIZE_DB_STMT(GStmtInstanceUpdate);
+    FINALIZE_DB_STMT(GStmtInstanceSelect);
+    FINALIZE_DB_STMT(GStmtPlayerInsert);
+    FINALIZE_DB_STMT(GStmtPlayerUpdate);
+    FINALIZE_DB_STMT(GStmtPlayersSelect);
+    FINALIZE_DB_STMT(GStmtFindInstanceByPlayerHash);
+    FINALIZE_DB_STMT(GStmtRecapSelect);
+    #undef FINALIZE_DB_STMT
+
+    if (GDatabase) {
+        sqlite3_close(GDatabase);
+        GDatabase = NULL;
+    }
+
+    sqlite3_shutdown();
+}
+
+static void generate_unique_hash(char *hash)  // `hash` points to up to 8 bytes of space.
+{
+    // this is kinda cheesy, but it's good enough.
+    static const char chartable[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    do {
+        for (size_t i = 0; i < 6; i++) {
+            hash[i] = chartable[((size_t) random()) % (sizeof (chartable)-1)];
+        }
+        hash[6] = '\0';
+    } while (!db_insert_used_hash(hash));  // !!! FIXME: a database failure (as opposed to a unique constraint clash) will cause an infinite loop here.
+}
+
+
 // This queues a string for sending over the connection's socket when possible.
 static void write_to_connection(Connection *conn, const char *str)
 {
@@ -162,7 +629,7 @@ static void write_to_connection(Connection *conn, const char *str)
     const size_t slen = strlen(str);
     const size_t avail = conn->outputbuf_len - conn->outputbuf_used;
     if (avail < slen) {
-        void *ptr = realloc(conn->outputbuf, conn->outputbuf_len + slen);
+        void *ptr = realloc(conn->outputbuf, conn->outputbuf_len + slen + 1);
         if (!ptr) {
             panic("Uhoh, out of memory in write_to_connection");  // !!! FIXME: we could handle this more gracefully.
         }
@@ -170,6 +637,7 @@ static void write_to_connection(Connection *conn, const char *str)
         conn->outputbuf_len += slen;
     }
     memcpy(conn->outputbuf + conn->outputbuf_used, str, slen);
+    conn->outputbuf[conn->outputbuf_used + slen] = '\0';  // make sure we're always null-terminated.
     conn->outputbuf_used += slen;
 }
 
@@ -522,7 +990,6 @@ static Instance *create_instance(void)
         // !!! FIXME:  of the game data for each instance. In practice, Zork 1 is 92160 bytes and
         // !!! FIXME:  only the first 11859 bytes are dynamic, so you're looking at an almost 80 kilobyte
         // !!! FIXME:  savings per instance here. But then again...80k ain't much in modern times.
-        generate_unique_hash(inst->hash);
         uint8 *story = (uint8 *) malloc(GOriginalStoryLen);
         if (!story) {
             free(inst);
@@ -553,8 +1020,6 @@ static Instance *create_instance(void)
 
         GState->writechar = writechar_multizork;
         GState->die = die_multizork;
-
-        loginfo("Created instance '%s'", inst->hash);
     }
     return inst;
 }
@@ -746,7 +1211,7 @@ static void start_instance(Instance *inst)
         memcpy(propdst, propptr, propsize);
 
         generate_unique_hash(player->hash);  // assign a hash to the player while we're here so they can rejoin.
-        snprintf(players->username, sizeof (player->username), "%s", conn->username);
+        snprintf(player->username, sizeof (player->username), "%s", conn->username);
         write_to_connection(conn, "\n\n");
         write_to_connection(conn, "*** THE GAME IS STARTING ***\n");
         write_to_connection(conn, "You can leave at any time by typing 'quit'.\n");
@@ -765,9 +1230,11 @@ static void start_instance(Instance *inst)
     uint8 *startroomptr = getObjectPtr(180);  // ZORK 1 SPECIFIC MAGIC: West of House room.
     GState = NULL;
     const uint8 orig_start_room_child = startroomptr[6];
+    uint32 outputbuf_used_at_start[ARRAYSIZE(inst->players)];
 
     // run a step right now, so they get the intro text and their next input will be for the game.
     for (int i = 0; i < num_players; i++) {
+        outputbuf_used_at_start[i] = inst->players[i].connection ? inst->players[i].connection->outputbuf_used : 0;
         // just this once, reset the Z-Machine between each player, so that we end up with
         //  one definite state and things like intro text gets run...
         // !!! FIXME: this can just copy dynamic memory, not the whole thing.
@@ -797,11 +1264,36 @@ static void start_instance(Instance *inst)
         startroomptr[6] = external_mem_objects_base;  // make players start of child list for start room.
         GState = NULL;
 
-
         // Run until the READ instruction, then gameplay officially starts.
         if (!step_instance(inst, i, NULL)) {
             break;  // instance failed, don't access it further.
         }
+    }
+
+    int dbokay = db_begin_transaction();
+    if (dbokay) {
+        inst->dbid = db_insert_instance(inst);
+        dbokay = dbokay && (inst->dbid != 0);
+        for (int i = 0; i < num_players; i++) {
+            Player *player = &inst->players[i];
+            if (dbokay) {
+                player->dbid = db_insert_player(inst, i);
+                dbokay = dbokay && (player->dbid != 0);
+                if (player->connection) {
+                    dbokay = dbokay && db_insert_transcript(player->dbid, 0, player->connection->outputbuf + outputbuf_used_at_start[i]);
+                }
+            }
+        }
+        if (!db_end_transaction()) {
+            dbokay = 0;
+        }
+    }
+
+    if (!dbokay) {
+        broadcast_to_instance(inst, "\n\n*** Oh no, we failed to set up the database, so we're jumping ship! ***\n\n\n");
+        inst->dbid = 0;
+        inst->started = 0;  // don't try to archive this instance.
+        free_instance(inst);
     }
 }
 
@@ -823,8 +1315,15 @@ static void free_instance(Instance *inst)
         }
     }
 
-    if (inst->started) {  // if game started, save the state. If not, just drop the resources.
-        // !!! FIXME: write me
+    if (inst->started && inst->dbid) {  // if game started, save the state. If not, just drop the resources.
+        // not much we can do if this fails...
+        if (db_begin_transaction()) {
+            db_update_instance(inst);
+            for (int i = 0; i < inst->num_players; i++) {
+                db_update_player(inst, i);
+            }
+            db_end_transaction();
+        }
     }
 
     if (GState == &inst->zmachine_state) {
@@ -864,11 +1363,12 @@ static void inpfn_confirm_quit(Connection *conn, const char *str)
     }
 }
 
-
 static void inpfn_ingame(Connection *conn, const char *str)
 {
-    // !!! FIXME: can we just put a pointer to the Player in Connection?
     Instance *inst = conn->instance;
+    const uint32 newoutput_start = conn->outputbuf_used;
+
+    // !!! FIXME: can we just put a pointer to the Player in Connection?
     Player *player = NULL;
     int playernum;
     for (playernum = 0; playernum < inst->num_players; playernum++) {
@@ -929,6 +1429,16 @@ static void inpfn_ingame(Connection *conn, const char *str)
             player->gvar_location = newloc;
         }
     }
+
+    // !!! FIXME: should we drop the connection (or instance?) if there's a database problem?
+    char strplusnl[sizeof (conn->inputbuf) + 1];
+    snprintf(strplusnl, sizeof (strplusnl), "%s\n", str);
+    db_begin_transaction();
+    db_insert_transcript(player->dbid, 1, strplusnl);
+    if (conn->outputbuf_used > newoutput_start) {  // new output to transcribe.
+        db_insert_transcript(player->dbid, 0, conn->outputbuf + newoutput_start);
+    }
+    db_end_transaction();
 }
 
 static void inpfn_waiting_for_players(Connection *conn, const char *str)
@@ -1068,6 +1578,10 @@ static void inpfn_new_game_or_join(Connection *conn, const char *str)
             drop_connection(conn);
             return;
         }
+
+        generate_unique_hash(conn->instance->hash);
+        loginfo("Created new instance '%s'", conn->instance->hash);
+
         conn->instance->players[0].connection = conn;
         write_to_connection(conn, "Okay! Tell your friends to telnet here, too, and join game '");
         write_to_connection(conn, conn->instance->hash);
@@ -1127,6 +1641,75 @@ static void inpfn_enter_name(Connection *conn, const char *str)
     conn->inputfn = inpfn_new_game_or_join;
 }
 
+static Player *reconnect_player(Connection *conn, const char *access_code)
+{
+    if (strlen(access_code) != 6) {
+        write_to_connection(conn, "Hmm, I can't find a game with that access code.\n");
+        return NULL;  // not a valid code.
+    }
+
+    // See if we're rejoining a live game...
+    // !!! FIXME: maintaining a list of instances means a lot less
+    // !!! FIXME:  searches than looking through the connections to
+    // !!! FIXME:  find it. A hashtable even more so.
+    for (size_t i = 0; i < num_connections; i++) {
+        Connection *c = connections[i];
+        Instance *inst = c->instance;
+        if (inst) {
+            for (int i = 0; i < inst->num_players; i++) {
+                Player *player = &inst->players[i];
+                if (strcmp(player->hash, access_code) == 0) {
+                    if (player->connection != NULL) {
+                        write_to_connection(conn, "Hmmm, that's a valid access code, but it's currently in use by another connection.\n");
+                        return NULL;
+                    }
+                    player->connection = conn;   // just wire right back in and go.
+                    conn->inputfn = inpfn_ingame;
+                    return player;
+                }
+            }
+        }
+    }
+
+    // Not found? Might be a game we archived because everyone left.
+    const sqlite3_int64 instance_dbid = db_find_instance_by_player_hash(access_code);
+    if (instance_dbid == 0) {  // if zero, nope, just a bogus code...
+        write_to_connection(conn, "Hmm, I can't find a game with that access code.\n");
+        return NULL;
+    }
+
+    // !!! FIXME: assert this instance definitely isn't live right now.
+    Instance *inst = create_instance();
+    if (!inst) {
+        write_to_connection(conn, "Hmm, that's a valid access code, but I seem to have run out of memory! Try again later.\n");
+        return NULL;
+    }
+
+    if (!db_select_instance(inst, instance_dbid)) {
+        write_to_connection(conn, "Hmm, that's a valid access code, but I had trouble starting the game! Try again later.\n");
+        free_instance(inst);
+        return NULL;
+    }
+
+    loginfo("Rehydrated archived instance '%s'", inst->hash);
+
+    for (int i = 0; i < inst->num_players; i++) {
+        Player *player = &inst->players[i];
+        if (strcmp(player->hash, access_code) == 0) {
+            assert(player->connection == NULL);
+            player->connection = conn;   // just wire right back in and go.
+            conn->inputfn = inpfn_ingame;
+            inst->started = 1;
+            return player;
+        }
+    }
+
+    assert(!"This shouldn't happen");
+    write_to_connection(conn, "Hmm, we found that access code, but something internal went wrong. Try again later?\n");
+    free_instance(inst);
+    return NULL;
+}
+
 // First prompt after connecting.
 static void inpfn_hello_sailor(Connection *conn, const char *str)
 {
@@ -1138,11 +1721,18 @@ static void inpfn_hello_sailor(Connection *conn, const char *str)
         conn->inputfn = inpfn_enter_name;
     } else {
         // look up player code.
-        write_to_connection(conn, "!!! FIXME: write this part. Bye for now.");
-        drop_connection(conn);
+        Player *player = reconnect_player(conn, str);
+        if (!player) {
+            write_to_connection(conn, "Try another code, or just press enter.\n");
+            return;
+        }
+
+        write_to_connection(conn, "We found you! Here's where you left off:\n\n");
+        db_select_recap(player, 5);
+        assert(player->connection == conn);
+        assert(player->connection->inputfn == inpfn_ingame);
     }
 }
-
 
 // dump whitespace on both sides of a string.
 static void trim(char *str)
@@ -1222,7 +1812,7 @@ static void recv_from_connection(Connection *conn)
             }
             conn->overlong_input = 0;
             conn->inputbuf_used = 0;
-            avail = sizeof (conn->inputbuf);
+            avail = sizeof (conn->inputbuf) - 1;
         } else if ((ch >= 32) && (ch < 127)) {  // basic ASCII only, sorry.
             if (!avail) {
                 conn->overlong_input = 1;  // drop this command.
@@ -1414,6 +2004,7 @@ static void signal_handler_shutdown(int sig)
 int main(int argc, char **argv)
 {
     const char *storyfname = (argc >= 2) ? argv[1] : "zork1.dat";
+
     GNow = time(NULL);
     srandom((unsigned long) GNow);
 
@@ -1425,6 +2016,8 @@ int main(int argc, char **argv)
     signal(SIGQUIT, signal_handler_shutdown);
 
     loadInitialStory(storyfname);
+
+    db_init();
 
     struct pollfd *pollfds = NULL;
 
@@ -1439,8 +2032,6 @@ int main(int argc, char **argv)
     }
 
     //drop_privileges();
-
-    //connect_to_database();
 
     loginfo("Now accepting connections on port %d (socket %d).", MULTIZORKD_PORT, listensock);
 
@@ -1588,6 +2179,8 @@ int main(int argc, char **argv)
     free(connections);
     free(pollfds);
     free(GOriginalStory);
+
+    db_quit();
 
     loginfo("Your score is 350 (total of 350 points), in 371 moves.");
     loginfo("This gives you the rank of Master Adventurer.");

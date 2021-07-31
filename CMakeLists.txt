@@ -5,6 +5,7 @@ add_executable(mojozork mojozork.c)
 if(NOT MSVC)  # the daemon is pretty Unixy.
     add_definitions(-Wall)
     add_executable(multizorkd multizorkd.c)
+    target_link_libraries(multizorkd -lsqlite3)
 endif()
 
 if(MSVC)

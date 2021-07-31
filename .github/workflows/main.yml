@@ -17,7 +17,7 @@ jobs:
       if: runner.os == 'Linux'
       run: |
         sudo apt-get update
-        sudo apt-get install cmake ninja-build
+        sudo apt-get install cmake ninja-build libsqlite3-dev
     - name: Get mojozork sources
       uses: actions/checkout@v2
     - name: Configure CMake
