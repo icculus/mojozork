@@ -1387,6 +1387,7 @@ static void inpfn_ingame(Connection *conn, const char *str)
     if ((strcasecmp(str, "q") == 0) || (strncasecmp(str, "quit", 4) == 0)) {
         write_to_connection(conn, "Do you wish to leave the game? (Y is affirmative):");
         conn->inputfn = inpfn_confirm_quit;
+        return;  // don't transcribe this part.
     } else if (strncasecmp(str, "save", 4) == 0) {
         write_to_connection(conn, "Requests to save the game are ignored, sorry.\n>");
     } else if (strncasecmp(str, "restore", 7) == 0) {
