@@ -840,7 +840,6 @@ static void writechar_multizork(const int ch)
     Instance *inst = (Instance *) GState;  // this works because zmachine_state is the first field in Instance.
     char str[2] = { (char) ch, '\0' };
     write_to_connection(get_current_player(inst)->connection, str);
-    // !!! FIXME: log to database?
 }
 
 // see comments on getObjectProperty
@@ -1162,8 +1161,6 @@ static void start_instance(Instance *inst)
     memset(inst->players, '\0', sizeof (inst->players));
     memcpy(inst->players, players, num_players * sizeof (Player));
     inst->num_players = num_players;
-
-    // !!! FIXME: write the instance and all players to the database.
 
     // !!! FIXME: split this out to a separate function.
     const uint8 *playerptr = GState->story + GState->header.objtab_addr;
@@ -1759,7 +1756,7 @@ static void process_connection_command(Connection *conn)
     conn->inputbuf[conn->inputbuf_used] = '\0';  // null-terminate the input.
     trim(conn->inputbuf);
     loginfo("New input from socket %d: '%s'", conn->sock, conn->inputbuf);
-    // !!! FIXME: write to database if in an instance
+
     conn->inputfn(conn, conn->inputbuf);
     if (conn->state == CONNSTATE_READY) {
         if (conn->inputfn != inpfn_ingame) {  // if in-game, the Z-Machine writes a prompt itself.
