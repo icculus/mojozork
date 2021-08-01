@@ -396,7 +396,7 @@ static int db_update_player(const Instance *inst, const int playernum)
              (sqlite3_bind_int(GStmtPlayerUpdate, 12, (int) player->gvar_coffin_held) == SQLITE_OK) &&
              (sqlite3_bind_int(GStmtPlayerUpdate, 13, (int) player->gvar_dead) == SQLITE_OK) &&
              (sqlite3_bind_int(GStmtPlayerUpdate, 14, (int) player->gvar_deaths) == SQLITE_OK) &&
-             (sqlite3_bind_int64(GStmtPlayerUpdate, 15, inst->dbid) == SQLITE_OK) &&
+             (sqlite3_bind_int64(GStmtPlayerUpdate, 15, player->dbid) == SQLITE_OK) &&
              (sqlite3_step(GStmtPlayerUpdate) == SQLITE_DONE) ) ? 1 : 0;
     if (!retval) { db_log_error("update player"); }
     return retval;
