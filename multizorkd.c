@@ -1665,6 +1665,7 @@ static Player *reconnect_player(Connection *conn, const char *access_code)
                     player->connection = conn;   // just wire right back in and go.
                     conn->instance = inst;
                     conn->inputfn = inpfn_ingame;
+                    snprintf(conn->username, sizeof (conn->username), "%s", player->username);
                     return player;
                 }
             }
@@ -1701,6 +1702,7 @@ static Player *reconnect_player(Connection *conn, const char *access_code)
             conn->inputfn = inpfn_ingame;
             conn->instance = inst;
             inst->started = 1;
+            snprintf(conn->username, sizeof (conn->username), "%s", player->username);
             return player;
         }
     }
