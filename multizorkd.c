@@ -241,8 +241,7 @@ static size_t num_connections = 0;
     " gvar_location, gvar_coffin_held, gvar_dead, gvar_deaths from players where instance=$1 order by id limit $2;"
 
 #define SQL_RECAP_SELECT \
-    "select content from transcripts where player=$1 order by id limit $2;"
-
+    "select content from (select id, content from transcripts where player=$1 order by id desc limit $2) order by id;"
 
 static sqlite3 *GDatabase = NULL;
 static sqlite3_stmt *GStmtBegin = NULL;
