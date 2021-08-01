@@ -1128,10 +1128,12 @@ static void tokenizeUserInput(void)
         if (isSep)
         {
             uint16 encoded[3] = { 0, 0, 0 };
+            uint8 pos = 0;
 
             const uint8 toklen = (uint8) (ptr-strstart);
+            if (toklen == 0)
+                break;  // ran out of string.
 
-            uint8 pos = 0;
             encoded[0] |= ((pos < toklen) ? toZscii(strstart[pos]) : 5) << 10; pos++;
             encoded[0] |= ((pos < toklen) ? toZscii(strstart[pos]) : 5) << 5; pos++;
             encoded[0] |= ((pos < toklen) ? toZscii(strstart[pos]) : 5) << 0; pos++;
@@ -1194,8 +1196,6 @@ static void tokenizeUserInput(void)
 
             if (numtoks >= parselen)
                 break;  // ran out of space.
-            else if (*ptr == '\0')
-                break;  // ran out of string.
 
             strstart = ptr + 1;
         } // if
