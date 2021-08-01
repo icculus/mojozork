@@ -1185,7 +1185,7 @@ static void tokenizeUserInput(void)
 
             if (i == numentries)
                 dictptr = NULL;  // not found.
-            const uint16 dictaddr = (unsigned int) (dictptr - GState->story);
+            const uint16 dictaddr = dictptr ? ((unsigned int) (dictptr - GState->story)) : 0;
 
             //dbg("Tokenized dictindex=%X, tokenlen=%u, strpos=%u\n", (unsigned int) dictaddr, (unsigned int) toklen, (unsigned int) ((uint8) (strstart-input)));
 
