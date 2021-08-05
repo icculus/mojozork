@@ -1270,8 +1270,8 @@ static void start_instance(Instance *inst)
         outputbuf_used_at_start[i] = inst->players[i].connection ? inst->players[i].connection->outputbuf_used : 0;
         // just this once, reset the Z-Machine between each player, so that we end up with
         //  one definite state and things like intro text gets run...
-        // !!! FIXME: this can just copy dynamic memory, not the whole thing.
-        memcpy(inst->zmachine_state.story, GOriginalStory, GOriginalStoryLen);
+        // This just resets the dynamic memory. The rest of the address space is immutable.
+        memcpy(inst->zmachine_state.story, GOriginalStory, ((size_t) inst->zmachine_state.header.staticmem_addr));
 
         // ZORK 1 SPECIFIC MAGIC:
         // Insert all the players into the West of House room each time. The
