@@ -1205,6 +1205,16 @@ static void start_instance(Instance *inst)
     for (size_t i = 0; i < num_players; i++) {
         Player *player = &inst->players[i];
         Connection *conn = player->connection;
+        const uint16 *globals = (uint16 *) (GState->story + GState->header.globals_addr);
+
+        // save off the initial value of the globals we track per-player.
+        player->gvar_location = globals[0];
+        player->gvar_deaths = globals[61];
+        player->gvar_dead = globals[62];
+        player->gvar_lit = globals[66];
+        player->gvar_verbose = globals[71];
+        player->gvar_alwayslit = globals[72];
+        player->gvar_coffin_held = globals[139];
 
         snprintf(player->username, sizeof (player->username), "%s", conn->username);
 
