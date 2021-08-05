@@ -1080,10 +1080,10 @@ static int step_instance(Instance *inst, const int playernum, const char *input)
     // ZORK 1 SPECIFIC MAGIC:
     // some "globals" are player-specific, so we swap them in before running.
     globals[0] = player->gvar_location;
-    globals[8] = player->gvar_verbose;
     globals[61] = player->gvar_deaths;
     globals[62] = player->gvar_dead;
     globals[66] = player->gvar_lit;
+    globals[71] = player->gvar_verbose;
     globals[72] = player->gvar_alwayslit;
     globals[139] = player->gvar_coffin_held;
 
@@ -1136,10 +1136,10 @@ static int step_instance(Instance *inst, const int playernum, const char *input)
         // ZORK 1 SPECIFIC MAGIC:
         // some "globals" are player-specific, so we swap them out after running.
         player->gvar_location = globals[0];
-        player->gvar_verbose = globals[8];
         player->gvar_deaths = globals[61];
         player->gvar_dead = globals[62];
         player->gvar_lit = globals[66];
+        player->gvar_verbose = globals[71];
         player->gvar_alwayslit = globals[72];
         player->gvar_coffin_held = globals[139];
 
