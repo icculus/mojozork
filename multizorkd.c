@@ -111,6 +111,7 @@ typedef struct Player
     uint16 gvar_lit;
     uint16 gvar_alwayslit;
     uint16 gvar_verbose;
+    uint16 gvar_superbrief;
     // !!! FIXME: several more, probably.
 } Player;
 
@@ -187,7 +188,8 @@ static size_t num_connections = 0;
     " gvar_deaths integer unsigned not null," \
     " gvar_lit integer unsigned not null," \
     " gvar_alwayslit integer unsigned not null," \
-    " gvar_verbose integer unsigned not null" \
+    " gvar_verbose integer unsigned not null," \
+    " gvar_superbrief integer unsigned not null" \
     /* !!! FIXME: several more, probably. */ \
     ");" \
     " " \
@@ -228,16 +230,16 @@ static size_t num_connections = 0;
     "insert into players (hashid, instance, username, next_logical_pc, next_logical_sp, next_logical_bp," \
     " next_logical_inputbuf, next_logical_inputbuflen, next_operands_1, next_operands_2, stack," \
     " object_table_data, property_table_data, gvar_location, gvar_coffin_held, gvar_dead, gvar_deaths," \
-    " gvar_lit, gvar_alwayslit, gvar_verbose" \
-    ") values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20);"
+    " gvar_lit, gvar_alwayslit, gvar_verbose, gvar_superbrief" \
+    ") values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21);"
 
 #define SQL_PLAYER_UPDATE \
     "update players set" \
     " next_logical_pc = $1, next_logical_sp = $2, next_logical_bp = $3," \
     " next_logical_inputbuf = $4, next_logical_inputbuflen = $5, next_operands_1 = $6, next_operands_2 = $7, stack = $8," \
     " object_table_data = $9, property_table_data = $10, gvar_location = $11, gvar_coffin_held = $12, gvar_dead = $13," \
-    " gvar_deaths = $14, gvar_lit = $15, gvar_alwayslit = $16, gvar_verbose = $17" \
-    " where id=$18 limit 1;"
+    " gvar_deaths = $14, gvar_lit = $15, gvar_alwayslit = $16, gvar_verbose = $17, gvar_superbrief = $18" \
+    " where id=$19 limit 1;"
 
 #define SQL_FIND_INSTANCE_BY_PLAYER_HASH \
     "select instance from players where hashid=$1 limit 1;"
@@ -246,7 +248,7 @@ static size_t num_connections = 0;
     "select id, hashid, username, next_logical_pc, next_logical_sp, next_logical_bp," \
     " next_logical_inputbuf, next_logical_inputbuflen, next_operands_1, next_operands_2," \
     " stack, object_table_data, property_table_data, gvar_location, gvar_coffin_held," \
-    " gvar_dead, gvar_deaths, gvar_lit, gvar_alwayslit, gvar_verbose" \
+    " gvar_dead, gvar_deaths, gvar_lit, gvar_alwayslit, gvar_verbose, gvar_superbrief" \
     " from players where instance=$1 order by id limit $2;"
 
 #define SQL_RECAP_SELECT \
@@ -352,8 +354,8 @@ static sqlite3_int64 db_insert_player(const Instance *inst, const int playernum)
     //"insert into players (hashid, instance, username, next_logical_pc, next_logical_sp, next_logical_bp,"
     //" next_logical_inputbuf, next_logical_inputbuflen, next_operands_1, next_operands_2, stack,"
     //" object_table_data, property_table_data, gvar_location, gvar_coffin_held, gvar_dead, gvar_deaths,"
-    //" gvar_lit, gvar_alwayslit, gvar_verbose"
-    //") values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20);"
+    //" gvar_lit, gvar_alwayslit, gvar_verbose, gvar_superbrief"
+    //") values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21);"
     const Player *player = &inst->players[playernum];
     assert(player->dbid == 0);
     
@@ -379,6 +381,7 @@ static sqlite3_int64 db_insert_player(const Instance *inst, const int playernum)
              (sqlite3_bind_int(GStmtPlayerInsert, 18, (int) player->gvar_lit) == SQLITE_OK) &&
              (sqlite3_bind_int(GStmtPlayerInsert, 19, (int) player->gvar_alwayslit) == SQLITE_OK) &&
              (sqlite3_bind_int(GStmtPlayerInsert, 20, (int) player->gvar_verbose) == SQLITE_OK) &&
+             (sqlite3_bind_int(GStmtPlayerInsert, 21, (int) player->gvar_superbrief) == SQLITE_OK) &&
              (sqlite3_step(GStmtPlayerInsert) == SQLITE_DONE) ) ? sqlite3_last_insert_rowid(GDatabase) : 0;
     if (!retval) { db_log_error("insert player"); }
     return retval;
@@ -390,8 +393,8 @@ static int db_update_player(const Instance *inst, const int playernum)
     //" next_logical_pc = $1, next_logical_sp = $2, next_logical_bp = $3,"
     //" next_logical_inputbuf = $4, next_logical_inputbuflen = $5, next_operands_1 = $6, next_operands_2 = $7, stack = $8,"
     //" object_table_data = $9, property_table_data = $10, gvar_location = $11, gvar_coffin_held = $12, gvar_dead = $13,"
-    //" gvar_deaths = $14, gvar_lit = $15, gvar_alwayslit = $16, gvar_verbose = $17"
-    //" where id=$18 limit 1;"
+    //" gvar_deaths = $14, gvar_lit = $15, gvar_alwayslit = $16, gvar_verbose = $17, gvar_superbrief = $18"
+    //" where id=$19 limit 1;"
     const Player *player = &inst->players[playernum];
     assert(player->dbid != 0);
     const int retval =
@@ -413,7 +416,8 @@ static int db_update_player(const Instance *inst, const int playernum)
              (sqlite3_bind_int(GStmtPlayerUpdate, 15, (int) player->gvar_lit) == SQLITE_OK) &&
              (sqlite3_bind_int(GStmtPlayerUpdate, 16, (int) player->gvar_alwayslit) == SQLITE_OK) &&
              (sqlite3_bind_int64(GStmtPlayerUpdate, 17, (int) player->gvar_verbose) == SQLITE_OK) &&
-             (sqlite3_bind_int64(GStmtPlayerUpdate, 18, player->dbid) == SQLITE_OK) &&
+             (sqlite3_bind_int64(GStmtPlayerUpdate, 18, (int) player->gvar_superbrief) == SQLITE_OK) &&
+             (sqlite3_bind_int64(GStmtPlayerUpdate, 19, player->dbid) == SQLITE_OK) &&
              (sqlite3_step(GStmtPlayerUpdate) == SQLITE_DONE) ) ? 1 : 0;
     if (!retval) { db_log_error("update player"); }
     return retval;
@@ -463,7 +467,7 @@ static int db_select_instance(Instance *inst, const sqlite3_int64 dbid)
     //"select id, hashid, username, next_logical_pc, next_logical_sp, next_logical_bp,"
     //" next_logical_inputbuf, next_logical_inputbuflen, next_operands_1, next_operands_2,"
     //" stack, object_table_data, property_table_data, gvar_location, gvar_coffin_held,"
-    //" gvar_dead, gvar_deaths, gvar_lit, gvar_alwayslit, gvar_verbose"
+    //" gvar_dead, gvar_deaths, gvar_lit, gvar_alwayslit, gvar_verbose, gvar_superbrief"
     //" from players where instance=$1 order by id limit $2;"
     if ( (sqlite3_reset(GStmtPlayersSelect) != SQLITE_OK) ||
          (sqlite3_bind_int64(GStmtPlayersSelect, 1, dbid) != SQLITE_OK) ||
@@ -497,6 +501,7 @@ static int db_select_instance(Instance *inst, const sqlite3_int64 dbid)
         player->gvar_lit = (uint16) sqlite3_column_int(GStmtPlayersSelect, 17);
         player->gvar_alwayslit = (uint16) sqlite3_column_int(GStmtPlayersSelect, 18);
         player->gvar_verbose = (uint16) sqlite3_column_int(GStmtPlayersSelect, 19);
+        player->gvar_superbrief = (uint16) sqlite3_column_int(GStmtPlayersSelect, 20);
         num_players++;
     }
 
@@ -1083,6 +1088,7 @@ static int step_instance(Instance *inst, const int playernum, const char *input)
     globals[61] = player->gvar_deaths;
     globals[62] = player->gvar_dead;
     globals[66] = player->gvar_lit;
+    globals[70] = player->gvar_superbrief;
     globals[71] = player->gvar_verbose;
     globals[72] = player->gvar_alwayslit;
     globals[139] = player->gvar_coffin_held;
@@ -1139,6 +1145,7 @@ static int step_instance(Instance *inst, const int playernum, const char *input)
         player->gvar_deaths = globals[61];
         player->gvar_dead = globals[62];
         player->gvar_lit = globals[66];
+        player->gvar_superbrief = globals[70];
         player->gvar_verbose = globals[71];
         player->gvar_alwayslit = globals[72];
         player->gvar_coffin_held = globals[139];
@@ -1212,6 +1219,7 @@ static void start_instance(Instance *inst)
         player->gvar_deaths = globals[61];
         player->gvar_dead = globals[62];
         player->gvar_lit = globals[66];
+        player->gvar_superbrief = globals[70];
         player->gvar_verbose = globals[71];
         player->gvar_alwayslit = globals[72];
         player->gvar_coffin_held = globals[139];
