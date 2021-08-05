@@ -1200,6 +1200,9 @@ static void tokenizeUserInput(void)
             strstart = ptr + 1;
         } // if
 
+        if (ch == '\0')  /* end of string */
+            break;
+
         ptr++;
     } // while
 
