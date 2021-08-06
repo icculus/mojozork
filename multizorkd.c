@@ -886,7 +886,7 @@ static void opcode_get_prop_addr_multizork(void)
     const uint16 objid = remap_objectid(GState->operands[0]);
     const uint16 propid = GState->operands[1];
     const uint16 external_mem_objects_base = ZORK1_EXTERN_MEM_OBJS_BASE;  // ZORK 1 SPECIFIC MAGIC
-    uint8 *ptr = getObjectProperty(objid, propid, NULL);
+    const uint8 *ptr = getObjectProperty(objid, propid, NULL);
     uint16 result;
 
     if (objid >= external_mem_objects_base) {  // looking for a multiplayer character
@@ -896,6 +896,7 @@ static void opcode_get_prop_addr_multizork(void)
             GState->die("Invalid multiplayer object id referenced");
         }
         result = fake_prop_base_addr + (MULTIPLAYER_PROP_DATALEN * requested_player);  // we give each player FAKE bytes at the end of the address space.
+        result += (uint16) ((size_t) (ptr - inst->players[requested_player].property_table_data));
     } else {
         result = ptr ? ((uint16) (ptr-GState->story)) : 0;
     }
