@@ -1055,12 +1055,14 @@ static Instance *create_instance(void)
 
         GState->writechar = writechar_multizork;
         GState->die = die_multizork;
+        GState = NULL;
     }
     return inst;
 }
 
 static int step_instance(Instance *inst, const int playernum, const char *input)
 {
+    const uint16 external_mem_objects_base = ZORK1_EXTERN_MEM_OBJS_BASE;  // ZORK 1 SPECIFIC MAGIC
     int retval = 1;
     assert(playernum >= 0);
     assert(playernum < ARRAYSIZE(inst->players));
@@ -1105,6 +1107,11 @@ static int step_instance(Instance *inst, const int playernum, const char *input)
     globals[72] = player->gvar_alwayslit;
     globals[133] = player->gvar_loadallowed;
     globals[139] = player->gvar_coffin_held;
+
+    // PLAYER global points to this player's object.
+    uint8 *glob111 = (uint8 *) &globals[111];
+    const uint16 playerobj = external_mem_objects_base + playernum;
+    WRITEUI16(glob111, playerobj);
 
     // If user had hit a READ instruction. Write the user's
     //  input to Z-Machine memory, and tokenize it.
@@ -1212,6 +1219,8 @@ static void start_instance(Instance *inst)
     inst->num_players = num_players;
 
     // !!! FIXME: split this out to a separate function.
+    GState = &inst->zmachine_state;
+    uint16 *globals = (uint16 *) (GState->story + GState->header.globals_addr);
     const uint8 *playerptr = GState->story + GState->header.objtab_addr;
     playerptr += 31 * sizeof (uint16);  // skip properties defaults table
     playerptr += 9 * (ZORK1_PLAYER_OBJID-1);  // find object in object table  // ZORK 1 SPECIFIC MAGIC
@@ -1228,10 +1237,11 @@ static void start_instance(Instance *inst)
 
     assert(propsize < sizeof (inst->players[0].property_table_data));
 
+    const uint16 external_mem_objects_base = ZORK1_EXTERN_MEM_OBJS_BASE;  // ZORK 1 SPECIFIC MAGIC
+
     for (size_t i = 0; i < num_players; i++) {
         Player *player = &inst->players[i];
         Connection *conn = player->connection;
-        const uint16 *globals = (uint16 *) (GState->story + GState->header.globals_addr);
 
         // save off the initial value of the globals we track per-player.
         player->gvar_location = globals[0];
@@ -1287,10 +1297,9 @@ static void start_instance(Instance *inst)
 
     inst->started = 1;
 
-    const uint16 external_mem_objects_base = ZORK1_EXTERN_MEM_OBJS_BASE;  // ZORK 1 SPECIFIC MAGIC
-    GState = &inst->zmachine_state;
     uint8 *startroomptr = getObjectPtr(180);  // ZORK 1 SPECIFIC MAGIC: West of House room.
     GState = NULL;
+
     const uint8 orig_start_room_child = startroomptr[6];
     uint32 outputbuf_used_at_start[ARRAYSIZE(inst->players)];
 
@@ -1325,6 +1334,11 @@ static void start_instance(Instance *inst)
         }
         startroomptr[6] = external_mem_objects_base;  // make players start of child list for start room.
         GState = NULL;
+
+        // PLAYER global points to this player's object.
+        uint8 *glob111 = (uint8 *) &globals[111];
+        const uint16 playerobj = external_mem_objects_base + i;
+        WRITEUI16(glob111, playerobj);
 
         // Run until the READ instruction, then gameplay officially starts.
         if (!step_instance(inst, i, NULL)) {
