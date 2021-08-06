@@ -1220,8 +1220,12 @@ static void start_instance(Instance *inst)
     const uint16 propaddr = READUI16(propptr);
     propptr = GState->story + propaddr;
     propptr += (*propptr * 2) + 1;  // skip object name to start of properties.
-    uint16 propsize;
-    for (propsize = 0; propptr[propsize]; propsize += ((propptr[propsize] >> 5) & 0x7) + 1) { /* spin */ }
+
+    uint16 propsize = 0;
+    while (propptr[propsize]) {
+        propsize += (((propptr[propsize] >> 5) & 0x7) + 1) + 1;
+    }
+
     assert(propsize < sizeof (inst->players[0].property_table_data));
 
     for (size_t i = 0; i < num_players; i++) {
