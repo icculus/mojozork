@@ -807,7 +807,7 @@ static uint8 *getObjectPtr(const uint16 _objid)
     const uint16 external_mem_objects_base = ZORK1_EXTERN_MEM_OBJS_BASE;  // ZORK 1 SPECIFIC MAGIC
     uint8 *ptr;
     if (objid >= external_mem_objects_base) {  // looking for a multiplayer character
-    Instance *inst = (Instance *) GState;  // this works because zmachine_state is the first field in Instance.
+        Instance *inst = (Instance *) GState;  // this works because zmachine_state is the first field in Instance.
         const int requested_player = (int) (objid - external_mem_objects_base);
         if (requested_player >= inst->num_players) {
             GState->die("Invalid multiplayer object id referenced");
