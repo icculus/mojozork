@@ -399,9 +399,9 @@ static sqlite3_int64 db_insert_player(const Instance *inst, const int playernum)
     //" object_table_data, property_table_data, touchbits, gvar_location, gvar_coffin_held, gvar_dead, gvar_deaths,"
     //" gvar_lit, gvar_alwayslit, gvar_verbose, gvar_superbrief, gvar_lucky, gvar_loadallowed"
     //") values ($hashid, $instance, $username, $next_logical_pc, $next_logical_sp, $next_logical_bp,"
-    //" next_logical_inputbuf, $next_logical_inputbuflen, $next_operands_1, $next_operands_2, $againbuf, $stack,"
-    //" object_table_data, $property_table_data, $touchbits, $gvar_location, $gvar_coffin_held, $gvar_dead, $gvar_deaths,"
-    //" gvar_lit, $gvar_alwayslit, $gvar_verbose, $gvar_superbrief, $gvar_lucky, $gvar_loadallowed);"
+    //" $next_logical_inputbuf, $next_logical_inputbuflen, $next_operands_1, $next_operands_2, $againbuf, $stack,"
+    //" $object_table_data, $property_table_data, $touchbits, $gvar_location, $gvar_coffin_held, $gvar_dead, $gvar_deaths,"
+    //" $gvar_lit, $gvar_alwayslit, $gvar_verbose, $gvar_superbrief, $gvar_lucky, $gvar_loadallowed);"
     const Player *player = &inst->players[playernum];
     assert(player->dbid == 0);
     
