@@ -1139,6 +1139,16 @@ static int step_instance(Instance *inst, const int playernum, const char *input)
     const uint16 playerobj = external_mem_objects_base + playernum;
     WRITEUI16(glob111, playerobj);
 
+    // ZORK 1 SPECIFIC MAGIC: Thse are places where there is a hardcoded check for the ADVENTURER object index (4).
+    //  There may be others I've missed. Patch those index values to be the current multiplayer object.
+    const uint8 playerobj8 = (uint8) playerobj;
+    GState->story[0x6B3F] = playerobj8;  // 6b3d:  JE              G6f,#04 [TRUE] 6b47
+    GState->story[0x93E4] = playerobj8;  // 93e2:  JE              G6f,#04 [FALSE] 93fd
+    GState->story[0x9411] = playerobj8;  // 9410:  JE              #04,G6f [TRUE] 9424
+    GState->story[0xD748] = playerobj8;  // d743:  JE              L02,#bf,#72,#04 [TRUE] d7a4
+    GState->story[0xE1AF] = playerobj8;  // e1ad:  JE              G6f,#04 [FALSE] e1c0
+    GState->story[0x6B88] = playerobj8;  // 6b86:  JE              G6f,#04 [FALSE] 6b0e
+
     // If user had hit a READ instruction. Write the user's
     //  input to Z-Machine memory, and tokenize it.
     if (player->next_inputbuf) {
