@@ -219,47 +219,49 @@ static size_t num_connections = 0;
     "create index if not exists used_hashes_index on used_hashes (hashid);" \
 
 #define SQL_TRANSCRIPT_INSERT \
-    "insert into transcripts (timestamp, player, isinput, content) values ($1, $2, $3, $4);"
+    "insert into transcripts (timestamp, player, isinput, content) values ($timestamp, $player, $isinput, $content);"
 
 #define SQL_USED_HASH_INSERT \
-    "insert into used_hashes (hashid) values ($1);"
+    "insert into used_hashes (hashid) values ($hashid);"
 
 #define SQL_INSTANCE_INSERT \
-    "insert into instances (hashid, num_players, starttime, savetime, instructions_run, dynamic_memory, story_filename) values ($1, $2, $3, $4, $5, $6, $7);"
+    "insert into instances (hashid, num_players, starttime, savetime, instructions_run, dynamic_memory, story_filename)" \
+    " values ($hashid, $num_players, $starttime, $savetime, $instructions_run, $dynamic_memory, $story_filename);"
 
 #define SQL_INSTANCE_UPDATE \
-    "update instances set savetime=$1, instructions_run=$2, dynamic_memory=$3 where id=$4 limit 1;"
+    "update instances set savetime=$savetime, instructions_run=$instructions_run, dynamic_memory=$dynamic_memory where id=$id limit 1;"
 
 #define SQL_INSTANCE_SELECT \
-    "select hashid, num_players, instructions_run, dynamic_memory from instances where id=$1 limit 1;"
+    "select * from instances where id=$id limit 1;"
 
 #define SQL_PLAYER_INSERT \
     "insert into players (hashid, instance, username, next_logical_pc, next_logical_sp, next_logical_bp," \
     " next_logical_inputbuf, next_logical_inputbuflen, next_operands_1, next_operands_2, stack," \
     " object_table_data, property_table_data, touchbits, gvar_location, gvar_coffin_held, gvar_dead, gvar_deaths," \
     " gvar_lit, gvar_alwayslit, gvar_verbose, gvar_superbrief, gvar_lucky, gvar_loadallowed" \
-    ") values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24);"
+    ") values ($hashid, $instance, $username, $next_logical_pc, $next_logical_sp, $next_logical_bp," \
+    " $next_logical_inputbuf, $next_logical_inputbuflen, $next_operands_1, $next_operands_2, $stack," \
+    " $object_table_data, $property_table_data, $touchbits, $gvar_location, $gvar_coffin_held, $gvar_dead, $gvar_deaths," \
+    " $gvar_lit, $gvar_alwayslit, $gvar_verbose, $gvar_superbrief, $gvar_lucky, $gvar_loadallowed);"
 
 #define SQL_PLAYER_UPDATE \
     "update players set" \
-    " next_logical_pc = $1, next_logical_sp = $2, next_logical_bp = $3," \
-    " next_logical_inputbuf = $4, next_logical_inputbuflen = $5, next_operands_1 = $6, next_operands_2 = $7, stack = $8," \
-    " object_table_data = $9, property_table_data = $10, touchbits = $11, gvar_location = $12, gvar_coffin_held = $13," \
-    " gvar_dead = $14, gvar_deaths = $15, gvar_lit = $16, gvar_alwayslit = $17, gvar_verbose = $18, gvar_superbrief = $19," \
-    " gvar_lucky = $20, gvar_loadallowed = $21 where id=$22 limit 1;"
+    " next_logical_pc = $next_logical_pc, next_logical_sp = $next_logical_sp, next_logical_bp = $next_logical_bp," \
+    " next_logical_inputbuf = $next_logical_inputbuf, next_logical_inputbuflen = $next_logical_inputbuflen," \
+    " next_operands_1 = $next_operands_1, next_operands_2 = $next_operands_2, stack = $stack," \
+    " object_table_data = $object_table_data, property_table_data = $property_table_data, touchbits = $touchbits," \
+    " gvar_location = $gvar_location, gvar_coffin_held = $gvar_coffin_held, gvar_dead = $gvar_dead," \
+    " gvar_deaths = $gvar_deaths, gvar_lit = $gvar_lit, gvar_alwayslit = $gvar_alwayslit, gvar_verbose = $gvar_verbose," \
+    " gvar_superbrief = $gvar_superbrief, gvar_lucky = $gvar_lucky, gvar_loadallowed = $gvar_loadallowed where id=$id limit 1;"
 
 #define SQL_FIND_INSTANCE_BY_PLAYER_HASH \
-    "select instance from players where hashid=$1 limit 1;"
+    "select instance from players where hashid=$hashid limit 1;"
 
 #define SQL_PLAYERS_SELECT \
-    "select id, hashid, username, next_logical_pc, next_logical_sp, next_logical_bp," \
-    " next_logical_inputbuf, next_logical_inputbuflen, next_operands_1, next_operands_2," \
-    " stack, object_table_data, property_table_data, touchbits, gvar_location, gvar_coffin_held," \
-    " gvar_dead, gvar_deaths, gvar_lit, gvar_alwayslit, gvar_verbose, gvar_superbrief," \
-    " gvar_lucky, gvar_loadallowed from players where instance=$1 order by id limit $2;"
+    "select * from players where instance=$instance order by id limit $limit;"
 
 #define SQL_RECAP_SELECT \
-    "select content from (select id, content from transcripts where player=$1 order by id desc limit $2) order by id;"
+    "select content from (select id, content from transcripts where player=$player order by id desc limit $limit) order by id;"
 
 static sqlite3 *GDatabase = NULL;
 static sqlite3_stmt *GStmtBegin = NULL;
@@ -299,15 +301,46 @@ static int db_end_transaction(void)
     return db_set_transaction(GStmtCommit, "commit sqlite3 transaction");
 }
 
+static int find_sql_column_by_name(sqlite3_stmt *stmt, const char *name)
+{
+    const int total = sqlite3_column_count(stmt);
+    for (int i = 0; i < total; i++) {
+        const char *colname = sqlite3_column_name(stmt, i);
+        if (strcasecmp(colname, name) == 0) {
+            return i;
+        }
+    }
+    panic("Asked for unknown column '%s' in SQL statement '%s'!", name, sqlite3_sql(stmt));
+    return -1;
+}
+
+static int find_sql_bind_by_name(sqlite3_stmt *stmt, const char *name)
+{
+    char dollarname[64];
+    snprintf(dollarname, sizeof (dollarname), "$%s", name);
+    const int retval = sqlite3_bind_parameter_index(stmt, dollarname);
+    if (retval) {
+        return retval;
+    }
+
+    panic("Asked for unknown bind '%s' in SQL statement '%s'!", name, sqlite3_sql(stmt));
+    return 0;
+}
+
+#define SQLBINDINT(stmt, name, val) (sqlite3_bind_int((stmt), find_sql_bind_by_name((stmt), (name)), (val)))
+#define SQLBINDINT64(stmt, name, val) (sqlite3_bind_int64((stmt), find_sql_bind_by_name((stmt), (name)), (val)))
+#define SQLBINDTEXT(stmt, name, val) (sqlite3_bind_text((stmt), find_sql_bind_by_name((stmt), (name)), (val), -1, SQLITE_TRANSIENT))
+#define SQLBINDBLOB(stmt, name, val, len) (sqlite3_bind_blob((stmt), find_sql_bind_by_name((stmt), (name)), (val), len, SQLITE_TRANSIENT))
+#define SQLCOLUMN(typ, stmt, name) (sqlite3_column_##typ((stmt), find_sql_column_by_name((stmt), (name))))
 static sqlite3_int64 db_insert_transcript(const sqlite3_int64 player_dbid, const int isinput, const char *content)
 {
-    //"insert into transcripts (timestamp, player, isinput, content) values ($1, $2, $3, $4);"
+    //"insert into transcripts (timestamp, player, isinput, content) values ($timestamp, $player, $isinput, $content);"
     const sqlite3_int64 retval =
            ( (sqlite3_reset(GStmtTranscriptInsert) == SQLITE_OK) &&
-             (sqlite3_bind_int64(GStmtTranscriptInsert, 1, (sqlite3_int64) GNow) == SQLITE_OK) &&
-             (sqlite3_bind_int64(GStmtTranscriptInsert, 2, player_dbid) == SQLITE_OK) &&
-             (sqlite3_bind_int(GStmtTranscriptInsert, 3, isinput) == SQLITE_OK) &&
-             (sqlite3_bind_text(GStmtTranscriptInsert, 4, content, -1, SQLITE_TRANSIENT) == SQLITE_OK) &&
+             (SQLBINDINT64(GStmtTranscriptInsert, "timestamp", (sqlite3_int64) GNow) == SQLITE_OK) &&
+             (SQLBINDINT64(GStmtTranscriptInsert, "player", player_dbid) == SQLITE_OK) &&
+             (SQLBINDINT(GStmtTranscriptInsert, "isinput", isinput) == SQLITE_OK) &&
+             (SQLBINDTEXT(GStmtTranscriptInsert, "content", content) == SQLITE_OK) &&
              (sqlite3_step(GStmtTranscriptInsert) == SQLITE_DONE) ) ? sqlite3_last_insert_rowid(GDatabase) : 0;
     if (!retval) { db_log_error("insert transcript"); }
     return retval;
@@ -315,10 +348,10 @@ static sqlite3_int64 db_insert_transcript(const sqlite3_int64 player_dbid, const
 
 static sqlite3_int64 db_insert_used_hash(const char *hashid)
 {
-    //"insert into used_hashes (hashid) values ($1);"
+    //"insert into used_hashes (hashid) values ($hashid);"
     const sqlite3_int64 retval =
            ( (sqlite3_reset(GStmtUsedHashInsert) == SQLITE_OK) &&
-             (sqlite3_bind_text(GStmtUsedHashInsert, 1, hashid, -1, SQLITE_TRANSIENT) == SQLITE_OK) &&
+             (SQLBINDTEXT(GStmtUsedHashInsert, "hashid", hashid) == SQLITE_OK) &&
              (sqlite3_step(GStmtUsedHashInsert) == SQLITE_DONE) ) ? sqlite3_last_insert_rowid(GDatabase) : 0;
     if (!retval) { db_log_error("insert used hash"); }
     return retval;
@@ -326,16 +359,17 @@ static sqlite3_int64 db_insert_used_hash(const char *hashid)
 
 static sqlite3_int64 db_insert_instance(const Instance *inst)
 {
-    //"insert into instances (hashid, num_players, starttime, savetime, instructions_run, dynamic_memory, story_filename) values ($1, $2, $3, $4, $5, $6, $7);"
+    //"insert into instances (hashid, num_players, starttime, savetime, instructions_run, dynamic_memory, story_filename)"
+    //" values ($hashid, $num_players, $starttime, $savetime, $instructions_run, $dynamic_memory, $story_filename);"
     const sqlite3_int64 retval =
            ( (sqlite3_reset(GStmtInstanceInsert) == SQLITE_OK) &&
-             (sqlite3_bind_text(GStmtInstanceInsert, 1, inst->hash, -1, SQLITE_TRANSIENT) == SQLITE_OK) &&
-             (sqlite3_bind_int(GStmtInstanceInsert, 2, inst->num_players) == SQLITE_OK) &&
-             (sqlite3_bind_int64(GStmtInstanceInsert, 3, (sqlite3_int64) GNow) == SQLITE_OK) &&
-             (sqlite3_bind_int64(GStmtInstanceInsert, 4, (sqlite3_int64) GNow) == SQLITE_OK) &&
-             (sqlite3_bind_int64(GStmtInstanceInsert, 5, (sqlite3_int64) inst->zmachine_state.instructions_run) == SQLITE_OK) &&
-             (sqlite3_bind_blob(GStmtInstanceInsert, 6, inst->zmachine_state.story, inst->zmachine_state.header.staticmem_addr, SQLITE_TRANSIENT) == SQLITE_OK) &&
-             (sqlite3_bind_text(GStmtInstanceInsert, 7, inst->zmachine_state.story_filename, -1, SQLITE_TRANSIENT) == SQLITE_OK) &&
+             (SQLBINDTEXT(GStmtInstanceInsert, "hashid", inst->hash) == SQLITE_OK) &&
+             (SQLBINDINT(GStmtInstanceInsert, "num_players", inst->num_players) == SQLITE_OK) &&
+             (SQLBINDINT64(GStmtInstanceInsert, "starttime", (sqlite3_int64) GNow) == SQLITE_OK) &&
+             (SQLBINDINT64(GStmtInstanceInsert, "savetime", (sqlite3_int64) GNow) == SQLITE_OK) &&
+             (SQLBINDINT64(GStmtInstanceInsert, "instructions_run", (sqlite3_int64) inst->zmachine_state.instructions_run) == SQLITE_OK) &&
+             (SQLBINDBLOB(GStmtInstanceInsert, "dynamic_memory", inst->zmachine_state.story, inst->zmachine_state.header.staticmem_addr) == SQLITE_OK) &&
+             (SQLBINDTEXT(GStmtInstanceInsert, "story_filename", inst->zmachine_state.story_filename) == SQLITE_OK) &&
              (sqlite3_step(GStmtInstanceInsert) == SQLITE_DONE) ) ? sqlite3_last_insert_rowid(GDatabase) : 0;
     if (!retval) { db_log_error("insert instance"); }
     return retval;
@@ -343,14 +377,14 @@ static sqlite3_int64 db_insert_instance(const Instance *inst)
 
 static int db_update_instance(const Instance *inst)
 {
-    //"update instances set savetime=$1, instructions_run=$2, dynamic_memory=$3 where id=$4 limit 1;"
+    //"update instances set savetime=$savetime, instructions_run=$instructions_run, dynamic_memory=$dynamic_memory where id=$id limit 1;"
     assert(inst->dbid != 0);
     const int retval =
            ( (sqlite3_reset(GStmtInstanceUpdate) == SQLITE_OK) &&
-             (sqlite3_bind_int64(GStmtInstanceUpdate, 1, (sqlite3_int64) GNow) == SQLITE_OK) &&
-             (sqlite3_bind_int64(GStmtInstanceUpdate, 2, (sqlite3_int64) inst->zmachine_state.instructions_run) == SQLITE_OK) &&
-             (sqlite3_bind_blob(GStmtInstanceUpdate, 3, inst->zmachine_state.story, inst->zmachine_state.header.staticmem_addr, SQLITE_TRANSIENT) == SQLITE_OK) &&
-             (sqlite3_bind_int64(GStmtInstanceUpdate, 4, (sqlite3_int64) inst->dbid) == SQLITE_OK) &&
+             (SQLBINDINT64(GStmtInstanceUpdate, "savetime", (sqlite3_int64) GNow) == SQLITE_OK) &&
+             (SQLBINDINT64(GStmtInstanceUpdate, "instructions_run", (sqlite3_int64) inst->zmachine_state.instructions_run) == SQLITE_OK) &&
+             (SQLBINDBLOB(GStmtInstanceUpdate, "dynamic_memory", inst->zmachine_state.story, inst->zmachine_state.header.staticmem_addr) == SQLITE_OK) &&
+             (SQLBINDINT64(GStmtInstanceUpdate, "id", (sqlite3_int64) inst->dbid) == SQLITE_OK) &&
              (sqlite3_step(GStmtInstanceUpdate) == SQLITE_DONE) ) ? 1 : 0;
     if (!retval) { db_log_error("update instance"); }
     return retval;
@@ -362,36 +396,39 @@ static sqlite3_int64 db_insert_player(const Instance *inst, const int playernum)
     //" next_logical_inputbuf, next_logical_inputbuflen, next_operands_1, next_operands_2, stack,"
     //" object_table_data, property_table_data, touchbits, gvar_location, gvar_coffin_held, gvar_dead, gvar_deaths,"
     //" gvar_lit, gvar_alwayslit, gvar_verbose, gvar_superbrief, gvar_lucky, gvar_loadallowed"
-    //") values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24);"
+    //") values ($hashid, $instance, $username, $next_logical_pc, $next_logical_sp, $next_logical_bp,"
+    //" next_logical_inputbuf, $next_logical_inputbuflen, $next_operands_1, $next_operands_2, $stack,"
+    //" object_table_data, $property_table_data, $touchbits, $gvar_location, $gvar_coffin_held, $gvar_dead, $gvar_deaths,"
+    //" gvar_lit, $gvar_alwayslit, $gvar_verbose, $gvar_superbrief, $gvar_lucky, $gvar_loadallowed);"
     const Player *player = &inst->players[playernum];
     assert(player->dbid == 0);
     
     const sqlite3_int64 retval =
            ( (sqlite3_reset(GStmtPlayerInsert) == SQLITE_OK) &&
-             (sqlite3_bind_text(GStmtPlayerInsert, 1, player->hash, -1, SQLITE_TRANSIENT) == SQLITE_OK) &&
-             (sqlite3_bind_int64(GStmtPlayerInsert, 2, inst->dbid) == SQLITE_OK) &&
-             (sqlite3_bind_text(GStmtPlayerInsert, 3, player->username, -1, SQLITE_TRANSIENT) == SQLITE_OK) &&
-             (sqlite3_bind_int(GStmtPlayerInsert, 4, (int) player->next_logical_pc) == SQLITE_OK) &&
-             (sqlite3_bind_int(GStmtPlayerInsert, 5, (int) player->next_logical_sp) == SQLITE_OK) &&
-             (sqlite3_bind_int(GStmtPlayerInsert, 6, (int) player->next_logical_bp) == SQLITE_OK) &&
-             (sqlite3_bind_int(GStmtPlayerInsert, 7, player->next_inputbuf ? ((int) (player->next_inputbuf - inst->zmachine_state.story)) : 0) == SQLITE_OK) &&
-             (sqlite3_bind_int(GStmtPlayerInsert, 8, player->next_inputbuflen) == SQLITE_OK) &&
-             (sqlite3_bind_int(GStmtPlayerInsert, 9, (int) player->next_operands[0]) == SQLITE_OK) &&
-             (sqlite3_bind_int(GStmtPlayerInsert, 10, (int) player->next_operands[1]) == SQLITE_OK) &&
-             (sqlite3_bind_blob(GStmtPlayerInsert, 11, player->stack, player->next_logical_sp * 2, SQLITE_TRANSIENT) == SQLITE_OK) &&
-             (sqlite3_bind_blob(GStmtPlayerInsert, 12, player->object_table_data, sizeof (player->object_table_data), SQLITE_TRANSIENT) == SQLITE_OK) &&
-             (sqlite3_bind_blob(GStmtPlayerInsert, 13, player->property_table_data, sizeof (player->property_table_data), SQLITE_TRANSIENT) == SQLITE_OK) &&
-             (sqlite3_bind_blob(GStmtPlayerInsert, 14, player->touchbits, sizeof (player->touchbits), SQLITE_TRANSIENT) == SQLITE_OK) &&
-             (sqlite3_bind_int(GStmtPlayerInsert, 15, (int) player->gvar_location) == SQLITE_OK) &&
-             (sqlite3_bind_int(GStmtPlayerInsert, 16, (int) player->gvar_coffin_held) == SQLITE_OK) &&
-             (sqlite3_bind_int(GStmtPlayerInsert, 17, (int) player->gvar_dead) == SQLITE_OK) &&
-             (sqlite3_bind_int(GStmtPlayerInsert, 18, (int) player->gvar_deaths) == SQLITE_OK) &&
-             (sqlite3_bind_int(GStmtPlayerInsert, 19, (int) player->gvar_lit) == SQLITE_OK) &&
-             (sqlite3_bind_int(GStmtPlayerInsert, 20, (int) player->gvar_alwayslit) == SQLITE_OK) &&
-             (sqlite3_bind_int(GStmtPlayerInsert, 21, (int) player->gvar_verbose) == SQLITE_OK) &&
-             (sqlite3_bind_int(GStmtPlayerInsert, 22, (int) player->gvar_superbrief) == SQLITE_OK) &&
-             (sqlite3_bind_int(GStmtPlayerInsert, 23, (int) player->gvar_lucky) == SQLITE_OK) &&
-             (sqlite3_bind_int(GStmtPlayerInsert, 24, (int) player->gvar_loadallowed) == SQLITE_OK) &&
+             (SQLBINDTEXT(GStmtPlayerInsert, "hashid", player->hash) == SQLITE_OK) &&
+             (SQLBINDINT64(GStmtPlayerInsert, "instance", inst->dbid) == SQLITE_OK) &&
+             (SQLBINDTEXT(GStmtPlayerInsert, "username", player->username) == SQLITE_OK) &&
+             (SQLBINDINT(GStmtPlayerInsert, "next_logical_pc", (int) player->next_logical_pc) == SQLITE_OK) &&
+             (SQLBINDINT(GStmtPlayerInsert, "next_logical_sp", (int) player->next_logical_sp) == SQLITE_OK) &&
+             (SQLBINDINT(GStmtPlayerInsert, "next_logical_bp", (int) player->next_logical_bp) == SQLITE_OK) &&
+             (SQLBINDINT(GStmtPlayerInsert, "next_logical_inputbuf", player->next_inputbuf ? ((int) (player->next_inputbuf - inst->zmachine_state.story)) : 0) == SQLITE_OK) &&
+             (SQLBINDINT(GStmtPlayerInsert, "next_logical_inputbuflen", player->next_inputbuflen) == SQLITE_OK) &&
+             (SQLBINDINT(GStmtPlayerInsert, "next_operands_1", (int) player->next_operands[0]) == SQLITE_OK) &&
+             (SQLBINDINT(GStmtPlayerInsert, "next_operands_2", (int) player->next_operands[1]) == SQLITE_OK) &&
+             (SQLBINDBLOB(GStmtPlayerInsert, "stack", player->stack, player->next_logical_sp * 2) == SQLITE_OK) &&
+             (SQLBINDBLOB(GStmtPlayerInsert, "object_table_data", player->object_table_data, sizeof (player->object_table_data)) == SQLITE_OK) &&
+             (SQLBINDBLOB(GStmtPlayerInsert, "property_table_data", player->property_table_data, sizeof (player->property_table_data)) == SQLITE_OK) &&
+             (SQLBINDBLOB(GStmtPlayerInsert, "touchbits", player->touchbits, sizeof (player->touchbits)) == SQLITE_OK) &&
+             (SQLBINDINT(GStmtPlayerInsert, "gvar_location", (int) player->gvar_location) == SQLITE_OK) &&
+             (SQLBINDINT(GStmtPlayerInsert, "gvar_coffin_held", (int) player->gvar_coffin_held) == SQLITE_OK) &&
+             (SQLBINDINT(GStmtPlayerInsert, "gvar_dead", (int) player->gvar_dead) == SQLITE_OK) &&
+             (SQLBINDINT(GStmtPlayerInsert, "gvar_deaths", (int) player->gvar_deaths) == SQLITE_OK) &&
+             (SQLBINDINT(GStmtPlayerInsert, "gvar_lit", (int) player->gvar_lit) == SQLITE_OK) &&
+             (SQLBINDINT(GStmtPlayerInsert, "gvar_alwayslit", (int) player->gvar_alwayslit) == SQLITE_OK) &&
+             (SQLBINDINT(GStmtPlayerInsert, "gvar_verbose", (int) player->gvar_verbose) == SQLITE_OK) &&
+             (SQLBINDINT(GStmtPlayerInsert, "gvar_superbrief", (int) player->gvar_superbrief) == SQLITE_OK) &&
+             (SQLBINDINT(GStmtPlayerInsert, "gvar_lucky", (int) player->gvar_lucky) == SQLITE_OK) &&
+             (SQLBINDINT(GStmtPlayerInsert, "gvar_loadallowed", (int) player->gvar_loadallowed) == SQLITE_OK) &&
              (sqlite3_step(GStmtPlayerInsert) == SQLITE_DONE) ) ? sqlite3_last_insert_rowid(GDatabase) : 0;
     if (!retval) { db_log_error("insert player"); }
     return retval;
@@ -400,37 +437,39 @@ static sqlite3_int64 db_insert_player(const Instance *inst, const int playernum)
 static int db_update_player(const Instance *inst, const int playernum)
 {
     //"update players set"
-    //" next_logical_pc = $1, next_logical_sp = $2, next_logical_bp = $3,"
-    //" next_logical_inputbuf = $4, next_logical_inputbuflen = $5, next_operands_1 = $6, next_operands_2 = $7, stack = $8,"
-    //" object_table_data = $9, property_table_data = $10, touchbits = $11, gvar_location = $12, gvar_coffin_held = $13,"
-    //" gvar_dead = $14, gvar_deaths = $15, gvar_lit = $16, gvar_alwayslit = $17, gvar_verbose = $18, gvar_superbrief = $19,"
-    //" gvar_lucky = $20, gvar_loadallowed = $21 where id=$22 limit 1;"
+    //" next_logical_pc = $next_logical_pc, next_logical_sp = $next_logical_sp, next_logical_bp = $next_logical_bp,"
+    //" next_logical_inputbuf = $next_logical_inputbuf, next_logical_inputbuflen = $next_logical_inputbuflen,"
+    //" next_operands_1 = $next_operands_1, next_operands_2 = $next_operands_2, stack = $stack,"
+    //" object_table_data = $object_table_data, property_table_data = $property_table_data, touchbits = $touchbits,"
+    //" gvar_location = $gvar_location, gvar_coffin_held = $gvar_coffin_held, gvar_dead = $gvar_dead,"
+    //" gvar_deaths = $gvar_deaths, gvar_lit = $gvar_lit, gvar_alwayslit = $gvar_alwayslit, gvar_verbose = $gvar_verbose,"
+    //" gvar_superbrief = $gvar_superbrief, gvar_lucky = $gvar_lucky, gvar_loadallowed = $gvar_loadallowed where id=$id limit 1;"
     const Player *player = &inst->players[playernum];
     assert(player->dbid != 0);
     const int retval =
            ( (sqlite3_reset(GStmtPlayerUpdate) == SQLITE_OK) &&
-             (sqlite3_bind_int(GStmtPlayerUpdate, 1, (int) player->next_logical_pc) == SQLITE_OK) &&
-             (sqlite3_bind_int(GStmtPlayerUpdate, 2, (int) player->next_logical_sp) == SQLITE_OK) &&
-             (sqlite3_bind_int(GStmtPlayerUpdate, 3, (int) player->next_logical_bp) == SQLITE_OK) &&
-             (sqlite3_bind_int(GStmtPlayerUpdate, 4, player->next_inputbuf ? ((int) (player->next_inputbuf - inst->zmachine_state.story)) : 0) == SQLITE_OK) &&
-             (sqlite3_bind_int(GStmtPlayerUpdate, 5, player->next_inputbuflen) == SQLITE_OK) &&
-             (sqlite3_bind_int(GStmtPlayerUpdate, 6, (int) player->next_operands[0]) == SQLITE_OK) &&
-             (sqlite3_bind_int(GStmtPlayerUpdate, 7, (int) player->next_operands[1]) == SQLITE_OK) &&
-             (sqlite3_bind_blob(GStmtPlayerUpdate, 8, player->stack, player->next_logical_sp * 2, SQLITE_TRANSIENT) == SQLITE_OK) &&
-             (sqlite3_bind_blob(GStmtPlayerUpdate, 9, player->object_table_data, sizeof (player->object_table_data), SQLITE_TRANSIENT) == SQLITE_OK) &&
-             (sqlite3_bind_blob(GStmtPlayerUpdate, 10, player->property_table_data, sizeof (player->property_table_data), SQLITE_TRANSIENT) == SQLITE_OK) &&
-             (sqlite3_bind_blob(GStmtPlayerUpdate, 11, player->touchbits, sizeof (player->touchbits), SQLITE_TRANSIENT) == SQLITE_OK) &&
-             (sqlite3_bind_int(GStmtPlayerUpdate, 12, (int) player->gvar_location) == SQLITE_OK) &&
-             (sqlite3_bind_int(GStmtPlayerUpdate, 13, (int) player->gvar_coffin_held) == SQLITE_OK) &&
-             (sqlite3_bind_int(GStmtPlayerUpdate, 14, (int) player->gvar_dead) == SQLITE_OK) &&
-             (sqlite3_bind_int(GStmtPlayerUpdate, 15, (int) player->gvar_deaths) == SQLITE_OK) &&
-             (sqlite3_bind_int(GStmtPlayerUpdate, 16, (int) player->gvar_lit) == SQLITE_OK) &&
-             (sqlite3_bind_int(GStmtPlayerUpdate, 17, (int) player->gvar_alwayslit) == SQLITE_OK) &&
-             (sqlite3_bind_int64(GStmtPlayerUpdate, 18, (int) player->gvar_verbose) == SQLITE_OK) &&
-             (sqlite3_bind_int64(GStmtPlayerUpdate, 19, (int) player->gvar_superbrief) == SQLITE_OK) &&
-             (sqlite3_bind_int64(GStmtPlayerUpdate, 20, (int) player->gvar_lucky) == SQLITE_OK) &&
-             (sqlite3_bind_int64(GStmtPlayerUpdate, 21, (int) player->gvar_loadallowed) == SQLITE_OK) &&
-             (sqlite3_bind_int64(GStmtPlayerUpdate, 22, player->dbid) == SQLITE_OK) &&
+             (SQLBINDINT(GStmtPlayerUpdate, "next_logical_pc", (int) player->next_logical_pc) == SQLITE_OK) &&
+             (SQLBINDINT(GStmtPlayerUpdate, "next_logical_sp", (int) player->next_logical_sp) == SQLITE_OK) &&
+             (SQLBINDINT(GStmtPlayerUpdate, "next_logical_bp", (int) player->next_logical_bp) == SQLITE_OK) &&
+             (SQLBINDINT(GStmtPlayerUpdate, "next_logical_inputbuf", player->next_inputbuf ? ((int) (player->next_inputbuf - inst->zmachine_state.story)) : 0) == SQLITE_OK) &&
+             (SQLBINDINT(GStmtPlayerUpdate, "next_logical_inputbuflen", player->next_inputbuflen) == SQLITE_OK) &&
+             (SQLBINDINT(GStmtPlayerUpdate, "next_operands_1", (int) player->next_operands[0]) == SQLITE_OK) &&
+             (SQLBINDINT(GStmtPlayerUpdate, "next_operands_2", (int) player->next_operands[1]) == SQLITE_OK) &&
+             (SQLBINDBLOB(GStmtPlayerUpdate, "stack", player->stack, player->next_logical_sp * 2) == SQLITE_OK) &&
+             (SQLBINDBLOB(GStmtPlayerUpdate, "object_table_data", player->object_table_data, sizeof (player->object_table_data)) == SQLITE_OK) &&
+             (SQLBINDBLOB(GStmtPlayerUpdate, "property_table_data", player->property_table_data, sizeof (player->property_table_data)) == SQLITE_OK) &&
+             (SQLBINDBLOB(GStmtPlayerUpdate, "touchbits", player->touchbits, sizeof (player->touchbits)) == SQLITE_OK) &&
+             (SQLBINDINT(GStmtPlayerUpdate, "gvar_location", (int) player->gvar_location) == SQLITE_OK) &&
+             (SQLBINDINT(GStmtPlayerUpdate, "gvar_coffin_held", (int) player->gvar_coffin_held) == SQLITE_OK) &&
+             (SQLBINDINT(GStmtPlayerUpdate, "gvar_dead", (int) player->gvar_dead) == SQLITE_OK) &&
+             (SQLBINDINT(GStmtPlayerUpdate, "gvar_deaths", (int) player->gvar_deaths) == SQLITE_OK) &&
+             (SQLBINDINT(GStmtPlayerUpdate, "gvar_lit", (int) player->gvar_lit) == SQLITE_OK) &&
+             (SQLBINDINT(GStmtPlayerUpdate, "gvar_alwayslit", (int) player->gvar_alwayslit) == SQLITE_OK) &&
+             (SQLBINDINT64(GStmtPlayerUpdate, "gvar_verbose", (int) player->gvar_verbose) == SQLITE_OK) &&
+             (SQLBINDINT64(GStmtPlayerUpdate, "gvar_superbrief", (int) player->gvar_superbrief) == SQLITE_OK) &&
+             (SQLBINDINT64(GStmtPlayerUpdate, "gvar_lucky", (int) player->gvar_lucky) == SQLITE_OK) &&
+             (SQLBINDINT64(GStmtPlayerUpdate, "gvar_loadallowed", (int) player->gvar_loadallowed) == SQLITE_OK) &&
+             (SQLBINDINT64(GStmtPlayerUpdate, "id", player->dbid) == SQLITE_OK) &&
              (sqlite3_step(GStmtPlayerUpdate) == SQLITE_DONE) ) ? 1 : 0;
     if (!retval) { db_log_error("update player"); }
     return retval;
@@ -438,15 +477,15 @@ static int db_update_player(const Instance *inst, const int playernum)
 
 static sqlite3_int64 db_find_instance_by_player_hash(const char *hashid)
 {
-    //"select instance from players where hashid=$1 limit 1;"
+    //"select instance from players where hashid=$hashid limit 1;"
     int rc;
     if ( (sqlite3_reset(GStmtFindInstanceByPlayerHash) != SQLITE_OK) ||
-         (sqlite3_bind_text(GStmtFindInstanceByPlayerHash, 1, hashid, -1, SQLITE_TRANSIENT) != SQLITE_OK) ||
+         (SQLBINDTEXT(GStmtFindInstanceByPlayerHash, "hashid", hashid) != SQLITE_OK) ||
          ((rc = sqlite3_step(GStmtFindInstanceByPlayerHash)) != SQLITE_ROW) ) {
         if (rc != SQLITE_DONE) { db_log_error("select instance by player hash"); }
         return 0;  // error or not found.
     }
-    return sqlite3_column_int64(GStmtFindInstanceByPlayerHash, 0);
+    return SQLCOLUMN(int64, GStmtFindInstanceByPlayerHash, "instance");
 }
 
 static int db_select_instance(Instance *inst, const sqlite3_int64 dbid)
@@ -455,21 +494,21 @@ static int db_select_instance(Instance *inst, const sqlite3_int64 dbid)
     assert(!inst->started);
     assert(!inst->dbid);
 
-    //"select hashid, num_players, instructions_run, dynamic_memory from instances where id=$1 limit 1;"
+    //"select * from instances where id=$id limit 1;"
     int rc;
     if ( (sqlite3_reset(GStmtInstanceSelect) != SQLITE_OK) ||
-         (sqlite3_bind_int64(GStmtInstanceSelect, 1, dbid) != SQLITE_OK) ||
+         (SQLBINDINT64(GStmtInstanceSelect, "id", dbid) != SQLITE_OK) ||
          ((rc = sqlite3_step(GStmtInstanceSelect)) != SQLITE_ROW) ) {
         if (rc != SQLITE_DONE) { db_log_error("select instance"); }
         return 0;  // error or not found.
     }
 
     inst->dbid = dbid;
-    snprintf(inst->hash, sizeof (inst->hash), "%s", sqlite3_column_text(GStmtInstanceSelect, 0));
-    inst->num_players = sqlite3_column_int(GStmtInstanceSelect, 1);
-    inst->zmachine_state.instructions_run = (uint32) sqlite3_column_int64(GStmtInstanceSelect, 2);
-    const void *dynmem = sqlite3_column_blob(GStmtInstanceSelect, 3);
-    size_t dynmemlen = sqlite3_column_bytes(GStmtInstanceSelect, 3);
+    snprintf(inst->hash, sizeof (inst->hash), "%s", SQLCOLUMN(text, GStmtInstanceSelect, "hashid"));
+    inst->num_players = SQLCOLUMN(int, GStmtInstanceSelect, "num_players");
+    inst->zmachine_state.instructions_run = (uint32) SQLCOLUMN(int64, GStmtInstanceSelect, "instructions_run");
+    const void *dynmem = SQLCOLUMN(blob, GStmtInstanceSelect, "dynamic_memory");
+    size_t dynmemlen = SQLCOLUMN(bytes, GStmtInstanceSelect, "dynamic_memory");
     assert(dynmemlen == ((size_t) inst->zmachine_state.header.staticmem_addr));
     if ( ((size_t) inst->zmachine_state.header.staticmem_addr) < dynmemlen ) {
         dynmemlen = (size_t) inst->zmachine_state.header.staticmem_addr;
@@ -477,14 +516,10 @@ static int db_select_instance(Instance *inst, const sqlite3_int64 dbid)
     memcpy(inst->zmachine_state.story, dynmem, dynmemlen);
     sqlite3_reset(GStmtInstanceSelect);
 
-    //"select id, hashid, username, next_logical_pc, next_logical_sp, next_logical_bp,"
-    //" next_logical_inputbuf, next_logical_inputbuflen, next_operands_1, next_operands_2,"
-    //" stack, object_table_data, property_table_data, touchbits, gvar_location, gvar_coffin_held,"
-    //" gvar_dead, gvar_deaths, gvar_lit, gvar_alwayslit, gvar_verbose, gvar_superbrief,"
-    //" gvar_lucky, gvar_loadallowed from players where instance=$1 order by id limit $2;"
+    //"select * from players where instance=$instance order by id limit $limit;"
     if ( (sqlite3_reset(GStmtPlayersSelect) != SQLITE_OK) ||
-         (sqlite3_bind_int64(GStmtPlayersSelect, 1, dbid) != SQLITE_OK) ||
-         (sqlite3_bind_int(GStmtPlayersSelect, 2, inst->num_players) != SQLITE_OK) ) {
+         (SQLBINDINT64(GStmtPlayersSelect, "instance", dbid) != SQLITE_OK) ||
+         (SQLBINDINT(GStmtPlayersSelect, "limit", inst->num_players) != SQLITE_OK) ) {
         db_log_error("select players");
         return 0;
     }
@@ -494,30 +529,30 @@ static int db_select_instance(Instance *inst, const sqlite3_int64 dbid)
         assert(num_players < inst->num_players);
         Player *player = &inst->players[num_players];
         player->connection = NULL;
-        player->dbid = sqlite3_column_int(GStmtPlayersSelect, 0);
-        snprintf(player->hash, sizeof (player->hash), "%s", sqlite3_column_text(GStmtPlayersSelect, 1));
-        snprintf(player->username, sizeof (player->username), "%s", sqlite3_column_text(GStmtPlayersSelect, 2));
-        player->next_logical_pc = (uint32) sqlite3_column_int(GStmtPlayersSelect, 3);
-        player->next_logical_sp = (uint32) sqlite3_column_int(GStmtPlayersSelect, 4);
-        player->next_logical_bp = (uint32) sqlite3_column_int(GStmtPlayersSelect, 5);
-        player->next_inputbuf = inst->zmachine_state.story + ((size_t) sqlite3_column_int(GStmtPlayersSelect, 6));
-        player->next_inputbuflen = (uint8) sqlite3_column_int(GStmtPlayersSelect, 7);
-        player->next_operands[0] = (uint16) sqlite3_column_int(GStmtPlayersSelect, 8);
-        player->next_operands[1] = (uint16) sqlite3_column_int(GStmtPlayersSelect, 9);
-        memcpy(player->stack, sqlite3_column_blob(GStmtPlayersSelect, 10), player->next_logical_sp * 2);
-        memcpy(player->object_table_data, sqlite3_column_blob(GStmtPlayersSelect, 11), sizeof (player->object_table_data));
-        memcpy(player->property_table_data, sqlite3_column_blob(GStmtPlayersSelect, 12), sizeof (player->property_table_data));
-        memcpy(player->touchbits, sqlite3_column_blob(GStmtPlayersSelect, 13), sizeof (player->touchbits));
-        player->gvar_location = (uint16) sqlite3_column_int(GStmtPlayersSelect, 14);
-        player->gvar_coffin_held = (uint16) sqlite3_column_int(GStmtPlayersSelect, 15);
-        player->gvar_dead = (uint16) sqlite3_column_int(GStmtPlayersSelect, 16);
-        player->gvar_deaths = (uint16) sqlite3_column_int(GStmtPlayersSelect, 17);
-        player->gvar_lit = (uint16) sqlite3_column_int(GStmtPlayersSelect, 18);
-        player->gvar_alwayslit = (uint16) sqlite3_column_int(GStmtPlayersSelect, 19);
-        player->gvar_verbose = (uint16) sqlite3_column_int(GStmtPlayersSelect, 20);
-        player->gvar_superbrief = (uint16) sqlite3_column_int(GStmtPlayersSelect, 21);
-        player->gvar_lucky = (uint16) sqlite3_column_int(GStmtPlayersSelect, 22);
-        player->gvar_loadallowed = (uint16) sqlite3_column_int(GStmtPlayersSelect, 23);
+        player->dbid = SQLCOLUMN(int, GStmtPlayersSelect, "id");
+        snprintf(player->hash, sizeof (player->hash), "%s", SQLCOLUMN(text, GStmtPlayersSelect, "hashid"));
+        snprintf(player->username, sizeof (player->username), "%s", SQLCOLUMN(text, GStmtPlayersSelect, "username"));
+        player->next_logical_pc = (uint32) SQLCOLUMN(int, GStmtPlayersSelect, "next_logical_pc");
+        player->next_logical_sp = (uint32) SQLCOLUMN(int, GStmtPlayersSelect, "next_logical_sp");
+        player->next_logical_bp = (uint32) SQLCOLUMN(int, GStmtPlayersSelect, "next_logical_bp");
+        player->next_inputbuf = inst->zmachine_state.story + ((size_t) SQLCOLUMN(int, GStmtPlayersSelect, "next_logical_inputbuf"));
+        player->next_inputbuflen = (uint8) SQLCOLUMN(int, GStmtPlayersSelect, "next_logical_inputbuflen");
+        player->next_operands[0] = (uint16) SQLCOLUMN(int, GStmtPlayersSelect, "next_operands_1");
+        player->next_operands[1] = (uint16) SQLCOLUMN(int, GStmtPlayersSelect, "next_operands_2");
+        memcpy(player->stack, SQLCOLUMN(blob, GStmtPlayersSelect, "stack"), player->next_logical_sp * 2);
+        memcpy(player->object_table_data, SQLCOLUMN(blob, GStmtPlayersSelect, "object_table_data"), sizeof (player->object_table_data));
+        memcpy(player->property_table_data, SQLCOLUMN(blob, GStmtPlayersSelect, "property_table_data"), sizeof (player->property_table_data));
+        memcpy(player->touchbits, SQLCOLUMN(blob, GStmtPlayersSelect, "touchbits"), sizeof (player->touchbits));
+        player->gvar_location = (uint16) SQLCOLUMN(int, GStmtPlayersSelect, "gvar_location");
+        player->gvar_coffin_held = (uint16) SQLCOLUMN(int, GStmtPlayersSelect, "gvar_coffin_held");
+        player->gvar_dead = (uint16) SQLCOLUMN(int, GStmtPlayersSelect, "gvar_dead");
+        player->gvar_deaths = (uint16) SQLCOLUMN(int, GStmtPlayersSelect, "gvar_deaths");
+        player->gvar_lit = (uint16) SQLCOLUMN(int, GStmtPlayersSelect, "gvar_lit");
+        player->gvar_alwayslit = (uint16) SQLCOLUMN(int, GStmtPlayersSelect, "gvar_alwayslit");
+        player->gvar_verbose = (uint16) SQLCOLUMN(int, GStmtPlayersSelect, "gvar_verbose");
+        player->gvar_superbrief = (uint16) SQLCOLUMN(int, GStmtPlayersSelect, "gvar_superbrief");
+        player->gvar_lucky = (uint16) SQLCOLUMN(int, GStmtPlayersSelect, "gvar_lucky");
+        player->gvar_loadallowed = (uint16) SQLCOLUMN(int, GStmtPlayersSelect, "gvar_loadallowed");
         num_players++;
     }
 
@@ -540,16 +575,16 @@ static int db_select_recap(Player *player, const int rows_of_recap)
         return 0;
     }
 
-    //"select isinput, content from transcripts where player=$1 order by id limit $2;"
+    //"select content from (select id, content from transcripts where player=$player order by id desc limit $limit) order by id;"
     if ( (sqlite3_reset(GStmtRecapSelect) != SQLITE_OK) ||
-         (sqlite3_bind_int64(GStmtRecapSelect, 1, player->dbid) != SQLITE_OK) ||
-         (sqlite3_bind_int(GStmtRecapSelect, 2, rows_of_recap) != SQLITE_OK) ) {
+         (SQLBINDINT64(GStmtRecapSelect, "player", player->dbid) != SQLITE_OK) ||
+         (SQLBINDINT(GStmtRecapSelect, "limit", rows_of_recap) != SQLITE_OK) ) {
         db_log_error("select recap");
         return 0;
     }
 
     while (sqlite3_step(GStmtRecapSelect) == SQLITE_ROW) {
-        write_to_connection(conn, (const char *) sqlite3_column_text(GStmtRecapSelect, 0));
+        write_to_connection(conn, (const char *) SQLCOLUMN(text, GStmtRecapSelect, "content"));
     }
 
     sqlite3_reset(GStmtRecapSelect);
