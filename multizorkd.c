@@ -1114,6 +1114,9 @@ static int step_instance(Instance *inst, const int playernum, const char *input)
     globals[133] = player->gvar_loadallowed;
     globals[139] = player->gvar_coffin_held;
 
+    // ZORK 1 SPECIFIC MAGIC: save the WONFLAG value before this step runs.
+    const uint16 starting_wonflag = globals[140];
+
     // ZORK 1 SPECIFIC MAGIC:
     // re-set the TOUCHBITs for all rooms for the current player.
     uint8 *roomobjptr = getObjectPtr(1);
@@ -1197,9 +1200,6 @@ static int step_instance(Instance *inst, const int playernum, const char *input)
 
         // ZORK 1 SPECIFIC MAGIC:
         // save off the TOUCHBIT for the player's current location, so we know they've already been there.
-        // !!! FIXME: when the WONFLAG is initially set, we should reset the West of House touchbit for everyone,
-        // not just the player that triggered the endgame.
-
         roomobjptr = getObjectPtr(1);
         for (int i = 1; i <= 250; i++, roomobjptr += 9) {
             const uint8 parent = roomobjptr ? roomobjptr[4] : 0;
@@ -1210,6 +1210,21 @@ static int step_instance(Instance *inst, const int playernum, const char *input)
             if (isset) {
                 *bitptr |= flag;
             } else {
+                *bitptr &= ~flag;
+            }
+        }
+
+        // ZORK 1 SPECIFIC MAGIC:
+        // Did WONFLAG get set? Player triggered the endgame this step!
+        // When the WONFLAG is initially set, we reset the West of House
+        // touchbit for everyone, not just the player that triggered the
+        // endgame, so anyone that wanders back to that room will be told
+        // about the entrance to the stone barrow.
+        if ((starting_wonflag == 0) && (globals[140] != 0)) {
+            loginfo("Player #%d on instance '%s' triggered the Zork 1 endgame!", playernum, inst->hash);
+            const uint8 flag = 1 << (179 % 8); // 179==West of House objid, minus 1.
+            for (int i = 0; i < inst->num_players; i++) {
+                uint8 *bitptr = &inst->players[i].touchbits[179 / 8];  // 179==West of House objid, minus 1.
                 *bitptr &= ~flag;
             }
         }
