@@ -101,6 +101,7 @@ typedef struct Player
     uint8 *next_inputbuf;   // where to write the next input for this player.
     uint8 next_inputbuflen;
     uint16 next_operands[2];  // to save off the READ operands for later.
+    char againbuf[128];
     uint8 object_table_data[9];
     uint8 property_table_data[MULTIPLAYER_PROP_DATALEN];
     // ZORK 1 SPECIFIC MAGIC: track the TOUCHBIT for each room per-player, so they all get descriptions on their first visit.
@@ -183,6 +184,7 @@ static size_t num_connections = 0;
     " next_logical_inputbuflen integer unsigned not null," \
     " next_operands_1 integer unsigned not null," \
     " next_operands_2 integer unsigned not null," \
+    " againbuf text not null," \
     " stack blob not null," \
     " object_table_data blob not null," \
     " property_table_data blob not null," \
@@ -236,11 +238,11 @@ static size_t num_connections = 0;
 
 #define SQL_PLAYER_INSERT \
     "insert into players (hashid, instance, username, next_logical_pc, next_logical_sp, next_logical_bp," \
-    " next_logical_inputbuf, next_logical_inputbuflen, next_operands_1, next_operands_2, stack," \
+    " next_logical_inputbuf, next_logical_inputbuflen, next_operands_1, next_operands_2, againbuf, stack," \
     " object_table_data, property_table_data, touchbits, gvar_location, gvar_coffin_held, gvar_dead, gvar_deaths," \
     " gvar_lit, gvar_alwayslit, gvar_verbose, gvar_superbrief, gvar_lucky, gvar_loadallowed" \
     ") values ($hashid, $instance, $username, $next_logical_pc, $next_logical_sp, $next_logical_bp," \
-    " $next_logical_inputbuf, $next_logical_inputbuflen, $next_operands_1, $next_operands_2, $stack," \
+    " $next_logical_inputbuf, $next_logical_inputbuflen, $next_operands_1, $next_operands_2, $againbuf, $stack," \
     " $object_table_data, $property_table_data, $touchbits, $gvar_location, $gvar_coffin_held, $gvar_dead, $gvar_deaths," \
     " $gvar_lit, $gvar_alwayslit, $gvar_verbose, $gvar_superbrief, $gvar_lucky, $gvar_loadallowed);"
 
@@ -248,7 +250,7 @@ static size_t num_connections = 0;
     "update players set" \
     " next_logical_pc = $next_logical_pc, next_logical_sp = $next_logical_sp, next_logical_bp = $next_logical_bp," \
     " next_logical_inputbuf = $next_logical_inputbuf, next_logical_inputbuflen = $next_logical_inputbuflen," \
-    " next_operands_1 = $next_operands_1, next_operands_2 = $next_operands_2, stack = $stack," \
+    " next_operands_1 = $next_operands_1, next_operands_2 = $next_operands_2, againbuf = $againbuf, stack = $stack," \
     " object_table_data = $object_table_data, property_table_data = $property_table_data, touchbits = $touchbits," \
     " gvar_location = $gvar_location, gvar_coffin_held = $gvar_coffin_held, gvar_dead = $gvar_dead," \
     " gvar_deaths = $gvar_deaths, gvar_lit = $gvar_lit, gvar_alwayslit = $gvar_alwayslit, gvar_verbose = $gvar_verbose," \
@@ -393,11 +395,11 @@ static int db_update_instance(const Instance *inst)
 static sqlite3_int64 db_insert_player(const Instance *inst, const int playernum)
 {
     //"insert into players (hashid, instance, username, next_logical_pc, next_logical_sp, next_logical_bp,"
-    //" next_logical_inputbuf, next_logical_inputbuflen, next_operands_1, next_operands_2, stack,"
+    //" next_logical_inputbuf, next_logical_inputbuflen, next_operands_1, next_operands_2, againbuf, stack,"
     //" object_table_data, property_table_data, touchbits, gvar_location, gvar_coffin_held, gvar_dead, gvar_deaths,"
     //" gvar_lit, gvar_alwayslit, gvar_verbose, gvar_superbrief, gvar_lucky, gvar_loadallowed"
     //") values ($hashid, $instance, $username, $next_logical_pc, $next_logical_sp, $next_logical_bp,"
-    //" next_logical_inputbuf, $next_logical_inputbuflen, $next_operands_1, $next_operands_2, $stack,"
+    //" next_logical_inputbuf, $next_logical_inputbuflen, $next_operands_1, $next_operands_2, $againbuf, $stack,"
     //" object_table_data, $property_table_data, $touchbits, $gvar_location, $gvar_coffin_held, $gvar_dead, $gvar_deaths,"
     //" gvar_lit, $gvar_alwayslit, $gvar_verbose, $gvar_superbrief, $gvar_lucky, $gvar_loadallowed);"
     const Player *player = &inst->players[playernum];
@@ -415,6 +417,7 @@ static sqlite3_int64 db_insert_player(const Instance *inst, const int playernum)
              (SQLBINDINT(GStmtPlayerInsert, "next_logical_inputbuflen", player->next_inputbuflen) == SQLITE_OK) &&
              (SQLBINDINT(GStmtPlayerInsert, "next_operands_1", (int) player->next_operands[0]) == SQLITE_OK) &&
              (SQLBINDINT(GStmtPlayerInsert, "next_operands_2", (int) player->next_operands[1]) == SQLITE_OK) &&
+             (SQLBINDTEXT(GStmtPlayerInsert, "againbuf", player->againbuf) == SQLITE_OK) &&
              (SQLBINDBLOB(GStmtPlayerInsert, "stack", player->stack, player->next_logical_sp * 2) == SQLITE_OK) &&
              (SQLBINDBLOB(GStmtPlayerInsert, "object_table_data", player->object_table_data, sizeof (player->object_table_data)) == SQLITE_OK) &&
              (SQLBINDBLOB(GStmtPlayerInsert, "property_table_data", player->property_table_data, sizeof (player->property_table_data)) == SQLITE_OK) &&
@@ -439,7 +442,7 @@ static int db_update_player(const Instance *inst, const int playernum)
     //"update players set"
     //" next_logical_pc = $next_logical_pc, next_logical_sp = $next_logical_sp, next_logical_bp = $next_logical_bp,"
     //" next_logical_inputbuf = $next_logical_inputbuf, next_logical_inputbuflen = $next_logical_inputbuflen,"
-    //" next_operands_1 = $next_operands_1, next_operands_2 = $next_operands_2, stack = $stack,"
+    //" next_operands_1 = $next_operands_1, next_operands_2 = $next_operands_2, againbuf = $againbuf, stack = $stack,"
     //" object_table_data = $object_table_data, property_table_data = $property_table_data, touchbits = $touchbits,"
     //" gvar_location = $gvar_location, gvar_coffin_held = $gvar_coffin_held, gvar_dead = $gvar_dead,"
     //" gvar_deaths = $gvar_deaths, gvar_lit = $gvar_lit, gvar_alwayslit = $gvar_alwayslit, gvar_verbose = $gvar_verbose,"
@@ -455,6 +458,7 @@ static int db_update_player(const Instance *inst, const int playernum)
              (SQLBINDINT(GStmtPlayerUpdate, "next_logical_inputbuflen", player->next_inputbuflen) == SQLITE_OK) &&
              (SQLBINDINT(GStmtPlayerUpdate, "next_operands_1", (int) player->next_operands[0]) == SQLITE_OK) &&
              (SQLBINDINT(GStmtPlayerUpdate, "next_operands_2", (int) player->next_operands[1]) == SQLITE_OK) &&
+             (SQLBINDTEXT(GStmtPlayerUpdate, "againbuf", player->againbuf) == SQLITE_OK) &&
              (SQLBINDBLOB(GStmtPlayerUpdate, "stack", player->stack, player->next_logical_sp * 2) == SQLITE_OK) &&
              (SQLBINDBLOB(GStmtPlayerUpdate, "object_table_data", player->object_table_data, sizeof (player->object_table_data)) == SQLITE_OK) &&
              (SQLBINDBLOB(GStmtPlayerUpdate, "property_table_data", player->property_table_data, sizeof (player->property_table_data)) == SQLITE_OK) &&
@@ -539,6 +543,7 @@ static int db_select_instance(Instance *inst, const sqlite3_int64 dbid)
         player->next_inputbuflen = (uint8) SQLCOLUMN(int, GStmtPlayersSelect, "next_logical_inputbuflen");
         player->next_operands[0] = (uint16) SQLCOLUMN(int, GStmtPlayersSelect, "next_operands_1");
         player->next_operands[1] = (uint16) SQLCOLUMN(int, GStmtPlayersSelect, "next_operands_2");
+        snprintf(player->againbuf, sizeof (player->againbuf), "%s", SQLCOLUMN(text, GStmtPlayersSelect, "againbuf"));
         memcpy(player->stack, SQLCOLUMN(blob, GStmtPlayersSelect, "stack"), player->next_logical_sp * 2);
         memcpy(player->object_table_data, SQLCOLUMN(blob, GStmtPlayersSelect, "object_table_data"), sizeof (player->object_table_data));
         memcpy(player->property_table_data, SQLCOLUMN(blob, GStmtPlayersSelect, "property_table_data"), sizeof (player->property_table_data));
@@ -1384,6 +1389,8 @@ static void start_instance(Instance *inst)
         assert((propsize + (numwords * 2) + 1) <= sizeof (player->property_table_data));
         memcpy(propdst, propptr, propsize);
 
+        snprintf(player->againbuf, sizeof (player->againbuf), "verbose");  // typing "again" as the first command appears to do "verbose". Beats me.
+
         generate_unique_hash(player->hash);  // assign a hash to the player while we're here so they can rejoin.
         snprintf(player->username, sizeof (player->username), "%s", conn->username);
         write_to_connection(conn, "\n\n");
@@ -1561,6 +1568,16 @@ static void inpfn_ingame(Connection *conn, const char *str)
         write_to_connection(conn, "\n\n*** The server appears to be confused. This is a bug on our end. Sorry, dropping you now. ***\n\n\n");
         drop_connection(conn);
         return;
+    }
+
+    // The Z-Machine handles this normally, but I'm not sure how at the moment,
+    //  so rather than trying to track that data per-player, we just catch
+    //  the AGAIN command here and replace it with the user's last in-game
+    //  input.
+    if (strcasecmp(str, "again") == 0) {
+        str = player->againbuf;
+    } else {
+        snprintf(player->againbuf, sizeof (player->againbuf), "%s", str);
     }
 
     if ((strcasecmp(str, "q") == 0) || (strncasecmp(str, "quit", 4) == 0)) {
