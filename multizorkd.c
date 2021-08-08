@@ -103,6 +103,8 @@ typedef struct Player
     uint16 next_operands[2];  // to save off the READ operands for later.
     uint8 object_table_data[9];
     uint8 property_table_data[MULTIPLAYER_PROP_DATALEN];
+    // ZORK 1 SPECIFIC MAGIC: track the TOUCHBIT for each room per-player, so they all get descriptions on their first visit.
+    uint8 touchbits[32];
     // ZORK 1 SPECIFIC MAGIC: these are player-specific globals we need to manage.
     uint16 gvar_location;
     uint16 gvar_coffin_held;
@@ -184,6 +186,7 @@ static size_t num_connections = 0;
     " stack blob not null," \
     " object_table_data blob not null," \
     " property_table_data blob not null," \
+    " touchbits blob not null," \
     " gvar_location integer unsigned not null," \
     " gvar_coffin_held integer unsigned not null," \
     " gvar_dead integer unsigned not null," \
@@ -233,17 +236,17 @@ static size_t num_connections = 0;
 #define SQL_PLAYER_INSERT \
     "insert into players (hashid, instance, username, next_logical_pc, next_logical_sp, next_logical_bp," \
     " next_logical_inputbuf, next_logical_inputbuflen, next_operands_1, next_operands_2, stack," \
-    " object_table_data, property_table_data, gvar_location, gvar_coffin_held, gvar_dead, gvar_deaths," \
+    " object_table_data, property_table_data, touchbits, gvar_location, gvar_coffin_held, gvar_dead, gvar_deaths," \
     " gvar_lit, gvar_alwayslit, gvar_verbose, gvar_superbrief, gvar_lucky, gvar_loadallowed" \
-    ") values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23);"
+    ") values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24);"
 
 #define SQL_PLAYER_UPDATE \
     "update players set" \
     " next_logical_pc = $1, next_logical_sp = $2, next_logical_bp = $3," \
     " next_logical_inputbuf = $4, next_logical_inputbuflen = $5, next_operands_1 = $6, next_operands_2 = $7, stack = $8," \
-    " object_table_data = $9, property_table_data = $10, gvar_location = $11, gvar_coffin_held = $12, gvar_dead = $13," \
-    " gvar_deaths = $14, gvar_lit = $15, gvar_alwayslit = $16, gvar_verbose = $17, gvar_superbrief = $18, gvar_lucky = $19," \
-    " gvar_loadallowed = $20 where id=$21 limit 1;"
+    " object_table_data = $9, property_table_data = $10, touchbits = $11, gvar_location = $12, gvar_coffin_held = $13," \
+    " gvar_dead = $14, gvar_deaths = $15, gvar_lit = $16, gvar_alwayslit = $17, gvar_verbose = $18, gvar_superbrief = $19," \
+    " gvar_lucky = $20, gvar_loadallowed = $21 where id=$22 limit 1;"
 
 #define SQL_FIND_INSTANCE_BY_PLAYER_HASH \
     "select instance from players where hashid=$1 limit 1;"
@@ -251,7 +254,7 @@ static size_t num_connections = 0;
 #define SQL_PLAYERS_SELECT \
     "select id, hashid, username, next_logical_pc, next_logical_sp, next_logical_bp," \
     " next_logical_inputbuf, next_logical_inputbuflen, next_operands_1, next_operands_2," \
-    " stack, object_table_data, property_table_data, gvar_location, gvar_coffin_held," \
+    " stack, object_table_data, property_table_data, touchbits, gvar_location, gvar_coffin_held," \
     " gvar_dead, gvar_deaths, gvar_lit, gvar_alwayslit, gvar_verbose, gvar_superbrief," \
     " gvar_lucky, gvar_loadallowed from players where instance=$1 order by id limit $2;"
 
@@ -357,9 +360,9 @@ static sqlite3_int64 db_insert_player(const Instance *inst, const int playernum)
 {
     //"insert into players (hashid, instance, username, next_logical_pc, next_logical_sp, next_logical_bp,"
     //" next_logical_inputbuf, next_logical_inputbuflen, next_operands_1, next_operands_2, stack,"
-    //" object_table_data, property_table_data, gvar_location, gvar_coffin_held, gvar_dead, gvar_deaths,"
+    //" object_table_data, property_table_data, touchbits, gvar_location, gvar_coffin_held, gvar_dead, gvar_deaths,"
     //" gvar_lit, gvar_alwayslit, gvar_verbose, gvar_superbrief, gvar_lucky, gvar_loadallowed"
-    //") values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23);"
+    //") values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24);"
     const Player *player = &inst->players[playernum];
     assert(player->dbid == 0);
     
@@ -378,16 +381,17 @@ static sqlite3_int64 db_insert_player(const Instance *inst, const int playernum)
              (sqlite3_bind_blob(GStmtPlayerInsert, 11, player->stack, player->next_logical_sp * 2, SQLITE_TRANSIENT) == SQLITE_OK) &&
              (sqlite3_bind_blob(GStmtPlayerInsert, 12, player->object_table_data, sizeof (player->object_table_data), SQLITE_TRANSIENT) == SQLITE_OK) &&
              (sqlite3_bind_blob(GStmtPlayerInsert, 13, player->property_table_data, sizeof (player->property_table_data), SQLITE_TRANSIENT) == SQLITE_OK) &&
-             (sqlite3_bind_int(GStmtPlayerInsert, 14, (int) player->gvar_location) == SQLITE_OK) &&
-             (sqlite3_bind_int(GStmtPlayerInsert, 15, (int) player->gvar_coffin_held) == SQLITE_OK) &&
-             (sqlite3_bind_int(GStmtPlayerInsert, 16, (int) player->gvar_dead) == SQLITE_OK) &&
-             (sqlite3_bind_int(GStmtPlayerInsert, 17, (int) player->gvar_deaths) == SQLITE_OK) &&
-             (sqlite3_bind_int(GStmtPlayerInsert, 18, (int) player->gvar_lit) == SQLITE_OK) &&
-             (sqlite3_bind_int(GStmtPlayerInsert, 19, (int) player->gvar_alwayslit) == SQLITE_OK) &&
-             (sqlite3_bind_int(GStmtPlayerInsert, 20, (int) player->gvar_verbose) == SQLITE_OK) &&
-             (sqlite3_bind_int(GStmtPlayerInsert, 21, (int) player->gvar_superbrief) == SQLITE_OK) &&
-             (sqlite3_bind_int(GStmtPlayerInsert, 22, (int) player->gvar_lucky) == SQLITE_OK) &&
-             (sqlite3_bind_int(GStmtPlayerInsert, 23, (int) player->gvar_loadallowed) == SQLITE_OK) &&
+             (sqlite3_bind_blob(GStmtPlayerInsert, 14, player->touchbits, sizeof (player->touchbits), SQLITE_TRANSIENT) == SQLITE_OK) &&
+             (sqlite3_bind_int(GStmtPlayerInsert, 15, (int) player->gvar_location) == SQLITE_OK) &&
+             (sqlite3_bind_int(GStmtPlayerInsert, 16, (int) player->gvar_coffin_held) == SQLITE_OK) &&
+             (sqlite3_bind_int(GStmtPlayerInsert, 17, (int) player->gvar_dead) == SQLITE_OK) &&
+             (sqlite3_bind_int(GStmtPlayerInsert, 18, (int) player->gvar_deaths) == SQLITE_OK) &&
+             (sqlite3_bind_int(GStmtPlayerInsert, 19, (int) player->gvar_lit) == SQLITE_OK) &&
+             (sqlite3_bind_int(GStmtPlayerInsert, 20, (int) player->gvar_alwayslit) == SQLITE_OK) &&
+             (sqlite3_bind_int(GStmtPlayerInsert, 21, (int) player->gvar_verbose) == SQLITE_OK) &&
+             (sqlite3_bind_int(GStmtPlayerInsert, 22, (int) player->gvar_superbrief) == SQLITE_OK) &&
+             (sqlite3_bind_int(GStmtPlayerInsert, 23, (int) player->gvar_lucky) == SQLITE_OK) &&
+             (sqlite3_bind_int(GStmtPlayerInsert, 24, (int) player->gvar_loadallowed) == SQLITE_OK) &&
              (sqlite3_step(GStmtPlayerInsert) == SQLITE_DONE) ) ? sqlite3_last_insert_rowid(GDatabase) : 0;
     if (!retval) { db_log_error("insert player"); }
     return retval;
@@ -398,9 +402,9 @@ static int db_update_player(const Instance *inst, const int playernum)
     //"update players set"
     //" next_logical_pc = $1, next_logical_sp = $2, next_logical_bp = $3,"
     //" next_logical_inputbuf = $4, next_logical_inputbuflen = $5, next_operands_1 = $6, next_operands_2 = $7, stack = $8,"
-    //" object_table_data = $9, property_table_data = $10, gvar_location = $11, gvar_coffin_held = $12, gvar_dead = $13,"
-    //" gvar_deaths = $14, gvar_lit = $15, gvar_alwayslit = $16, gvar_verbose = $17, gvar_superbrief = $18, gvar_lucky = $19"
-    //" gvar_loadallowed = $20 where id=$21 limit 1;"
+    //" object_table_data = $9, property_table_data = $10, touchbits = $11, gvar_location = $12, gvar_coffin_held = $13,"
+    //" gvar_dead = $14, gvar_deaths = $15, gvar_lit = $16, gvar_alwayslit = $17, gvar_verbose = $18, gvar_superbrief = $19,"
+    //" gvar_lucky = $20, gvar_loadallowed = $21 where id=$22 limit 1;"
     const Player *player = &inst->players[playernum];
     assert(player->dbid != 0);
     const int retval =
@@ -415,17 +419,18 @@ static int db_update_player(const Instance *inst, const int playernum)
              (sqlite3_bind_blob(GStmtPlayerUpdate, 8, player->stack, player->next_logical_sp * 2, SQLITE_TRANSIENT) == SQLITE_OK) &&
              (sqlite3_bind_blob(GStmtPlayerUpdate, 9, player->object_table_data, sizeof (player->object_table_data), SQLITE_TRANSIENT) == SQLITE_OK) &&
              (sqlite3_bind_blob(GStmtPlayerUpdate, 10, player->property_table_data, sizeof (player->property_table_data), SQLITE_TRANSIENT) == SQLITE_OK) &&
-             (sqlite3_bind_int(GStmtPlayerUpdate, 11, (int) player->gvar_location) == SQLITE_OK) &&
-             (sqlite3_bind_int(GStmtPlayerUpdate, 12, (int) player->gvar_coffin_held) == SQLITE_OK) &&
-             (sqlite3_bind_int(GStmtPlayerUpdate, 13, (int) player->gvar_dead) == SQLITE_OK) &&
-             (sqlite3_bind_int(GStmtPlayerUpdate, 14, (int) player->gvar_deaths) == SQLITE_OK) &&
-             (sqlite3_bind_int(GStmtPlayerUpdate, 15, (int) player->gvar_lit) == SQLITE_OK) &&
-             (sqlite3_bind_int(GStmtPlayerUpdate, 16, (int) player->gvar_alwayslit) == SQLITE_OK) &&
-             (sqlite3_bind_int64(GStmtPlayerUpdate, 17, (int) player->gvar_verbose) == SQLITE_OK) &&
-             (sqlite3_bind_int64(GStmtPlayerUpdate, 18, (int) player->gvar_superbrief) == SQLITE_OK) &&
-             (sqlite3_bind_int64(GStmtPlayerUpdate, 19, (int) player->gvar_lucky) == SQLITE_OK) &&
-             (sqlite3_bind_int64(GStmtPlayerUpdate, 20, (int) player->gvar_loadallowed) == SQLITE_OK) &&
-             (sqlite3_bind_int64(GStmtPlayerUpdate, 21, player->dbid) == SQLITE_OK) &&
+             (sqlite3_bind_blob(GStmtPlayerUpdate, 11, player->touchbits, sizeof (player->touchbits), SQLITE_TRANSIENT) == SQLITE_OK) &&
+             (sqlite3_bind_int(GStmtPlayerUpdate, 12, (int) player->gvar_location) == SQLITE_OK) &&
+             (sqlite3_bind_int(GStmtPlayerUpdate, 13, (int) player->gvar_coffin_held) == SQLITE_OK) &&
+             (sqlite3_bind_int(GStmtPlayerUpdate, 14, (int) player->gvar_dead) == SQLITE_OK) &&
+             (sqlite3_bind_int(GStmtPlayerUpdate, 15, (int) player->gvar_deaths) == SQLITE_OK) &&
+             (sqlite3_bind_int(GStmtPlayerUpdate, 16, (int) player->gvar_lit) == SQLITE_OK) &&
+             (sqlite3_bind_int(GStmtPlayerUpdate, 17, (int) player->gvar_alwayslit) == SQLITE_OK) &&
+             (sqlite3_bind_int64(GStmtPlayerUpdate, 18, (int) player->gvar_verbose) == SQLITE_OK) &&
+             (sqlite3_bind_int64(GStmtPlayerUpdate, 19, (int) player->gvar_superbrief) == SQLITE_OK) &&
+             (sqlite3_bind_int64(GStmtPlayerUpdate, 20, (int) player->gvar_lucky) == SQLITE_OK) &&
+             (sqlite3_bind_int64(GStmtPlayerUpdate, 21, (int) player->gvar_loadallowed) == SQLITE_OK) &&
+             (sqlite3_bind_int64(GStmtPlayerUpdate, 22, player->dbid) == SQLITE_OK) &&
              (sqlite3_step(GStmtPlayerUpdate) == SQLITE_DONE) ) ? 1 : 0;
     if (!retval) { db_log_error("update player"); }
     return retval;
@@ -474,7 +479,7 @@ static int db_select_instance(Instance *inst, const sqlite3_int64 dbid)
 
     //"select id, hashid, username, next_logical_pc, next_logical_sp, next_logical_bp,"
     //" next_logical_inputbuf, next_logical_inputbuflen, next_operands_1, next_operands_2,"
-    //" stack, object_table_data, property_table_data, gvar_location, gvar_coffin_held,"
+    //" stack, object_table_data, property_table_data, touchbits, gvar_location, gvar_coffin_held,"
     //" gvar_dead, gvar_deaths, gvar_lit, gvar_alwayslit, gvar_verbose, gvar_superbrief,"
     //" gvar_lucky, gvar_loadallowed from players where instance=$1 order by id limit $2;"
     if ( (sqlite3_reset(GStmtPlayersSelect) != SQLITE_OK) ||
@@ -502,16 +507,17 @@ static int db_select_instance(Instance *inst, const sqlite3_int64 dbid)
         memcpy(player->stack, sqlite3_column_blob(GStmtPlayersSelect, 10), player->next_logical_sp * 2);
         memcpy(player->object_table_data, sqlite3_column_blob(GStmtPlayersSelect, 11), sizeof (player->object_table_data));
         memcpy(player->property_table_data, sqlite3_column_blob(GStmtPlayersSelect, 12), sizeof (player->property_table_data));
-        player->gvar_location = (uint16) sqlite3_column_int(GStmtPlayersSelect, 13);
-        player->gvar_coffin_held = (uint16) sqlite3_column_int(GStmtPlayersSelect, 14);
-        player->gvar_dead = (uint16) sqlite3_column_int(GStmtPlayersSelect, 15);
-        player->gvar_deaths = (uint16) sqlite3_column_int(GStmtPlayersSelect, 16);
-        player->gvar_lit = (uint16) sqlite3_column_int(GStmtPlayersSelect, 17);
-        player->gvar_alwayslit = (uint16) sqlite3_column_int(GStmtPlayersSelect, 18);
-        player->gvar_verbose = (uint16) sqlite3_column_int(GStmtPlayersSelect, 19);
-        player->gvar_superbrief = (uint16) sqlite3_column_int(GStmtPlayersSelect, 20);
-        player->gvar_lucky = (uint16) sqlite3_column_int(GStmtPlayersSelect, 21);
-        player->gvar_loadallowed = (uint16) sqlite3_column_int(GStmtPlayersSelect, 22);
+        memcpy(player->touchbits, sqlite3_column_blob(GStmtPlayersSelect, 13), sizeof (player->touchbits));
+        player->gvar_location = (uint16) sqlite3_column_int(GStmtPlayersSelect, 14);
+        player->gvar_coffin_held = (uint16) sqlite3_column_int(GStmtPlayersSelect, 15);
+        player->gvar_dead = (uint16) sqlite3_column_int(GStmtPlayersSelect, 16);
+        player->gvar_deaths = (uint16) sqlite3_column_int(GStmtPlayersSelect, 17);
+        player->gvar_lit = (uint16) sqlite3_column_int(GStmtPlayersSelect, 18);
+        player->gvar_alwayslit = (uint16) sqlite3_column_int(GStmtPlayersSelect, 19);
+        player->gvar_verbose = (uint16) sqlite3_column_int(GStmtPlayersSelect, 20);
+        player->gvar_superbrief = (uint16) sqlite3_column_int(GStmtPlayersSelect, 21);
+        player->gvar_lucky = (uint16) sqlite3_column_int(GStmtPlayersSelect, 22);
+        player->gvar_loadallowed = (uint16) sqlite3_column_int(GStmtPlayersSelect, 23);
         num_players++;
     }
 
@@ -1108,6 +1114,23 @@ static int step_instance(Instance *inst, const int playernum, const char *input)
     globals[133] = player->gvar_loadallowed;
     globals[139] = player->gvar_coffin_held;
 
+    // ZORK 1 SPECIFIC MAGIC:
+    // re-set the TOUCHBITs for all rooms for the current player.
+    uint8 *roomobjptr = getObjectPtr(1);
+    for (int i = 1; i <= 250; i++, roomobjptr += 9) {
+        const uint8 parent = roomobjptr ? roomobjptr[4] : 0;
+        if (parent != 82) { continue; } // in Zork 1, all rooms are children of object #82.
+        const uint8 *bitptr = &player->touchbits[(i-1) / 8];
+        const uint8 flag = 1 << ((i-1) % 8);
+        const int isset = (*bitptr & flag) ? 1 : 0;
+        if (isset) {
+            *roomobjptr |= (0x80 >> 3);  // in zork1, TOUCHBIT is attribute 3.
+        } else {
+            *roomobjptr &= ~(0x80 >> 3);  // in zork1, TOUCHBIT is attribute 3.
+        }
+    }
+
+    // ZORK 1 SPECIFIC MAGIC:
     // PLAYER global points to this player's object.
     uint8 *glob111 = (uint8 *) &globals[111];
     const uint16 playerobj = external_mem_objects_base + playernum;
@@ -1171,6 +1194,25 @@ static int step_instance(Instance *inst, const int playernum, const char *input)
         player->gvar_alwayslit = globals[72];
         player->gvar_loadallowed = globals[133];
         player->gvar_coffin_held = globals[139];
+
+        // ZORK 1 SPECIFIC MAGIC:
+        // save off the TOUCHBIT for the player's current location, so we know they've already been there.
+        // !!! FIXME: when the WONFLAG is initially set, we should reset the West of House touchbit for everyone,
+        // not just the player that triggered the endgame.
+
+        roomobjptr = getObjectPtr(1);
+        for (int i = 1; i <= 250; i++, roomobjptr += 9) {
+            const uint8 parent = roomobjptr ? roomobjptr[4] : 0;
+            if (parent != 82) { continue; } // in Zork 1, all rooms are children of object #82.
+            const int isset = ((*roomobjptr) & (0x80 >> 3)) ? 1 : 0;  // in zork1, TOUCHBIT is attribute 3.
+            uint8 *bitptr = &player->touchbits[(i-1) / 8];
+            const uint8 flag = 1 << ((i-1) % 8);
+            if (isset) {
+                *bitptr |= flag;
+            } else {
+                *bitptr &= ~flag;
+            }
+        }
 
         // ZORK 1 SPECIFIC MAGIC: mark the current player as visible so other players see him.
         GState->operands[0] = ZORK1_PLAYER_OBJID;
