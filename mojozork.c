@@ -483,8 +483,10 @@ static void opcode_dec(void)
 
 static void opcode_load(void)
 {
+    const uint8 *valptr = varAddress((uint8) (GState->operands[0] & 0xFF), 0);
+    const uint16 val = READUI16(valptr);
     uint8 *store = varAddress(*(GState->pc++), 1);
-    WRITEUI16(store, GState->operands[0]);
+    WRITEUI16(store, val);
 } // opcode_load
 
 static void opcode_loadw(void)
