@@ -351,14 +351,20 @@ static sqlite3_int64 db_insert_transcript(const sqlite3_int64 player_dbid, const
     return retval;
 }
 
-static sqlite3_int64 db_insert_used_hash(const char *hashid)
+static sqlite3_int64 db_insert_used_hash(const char *hashid, int *_notunique)
 {
     //"insert into used_hashes (hashid) values ($hashid);"
+    int rc = SQLITE_DONE;
     const sqlite3_int64 retval =
            ( (sqlite3_reset(GStmtUsedHashInsert) == SQLITE_OK) &&
              (SQLBINDTEXT(GStmtUsedHashInsert, "hashid", hashid) == SQLITE_OK) &&
-             (sqlite3_step(GStmtUsedHashInsert) == SQLITE_DONE) ) ? sqlite3_last_insert_rowid(GDatabase) : 0;
-    if (!retval) { db_log_error("insert used hash"); }
+             ((rc = sqlite3_step(GStmtUsedHashInsert)) == SQLITE_DONE) ) ? sqlite3_last_insert_rowid(GDatabase) : 0;
+
+    *_notunique = (rc == SQLITE_CONSTRAINT);
+
+    if ((!retval) && (!*_notunique)) {
+        db_log_error("insert used hash");
+    }
     return retval;
 }
 
@@ -690,16 +696,24 @@ static void db_quit(void)
     sqlite3_shutdown();
 }
 
-static void generate_unique_hash(char *hash)  // `hash` points to up to 8 bytes of space.
+static int generate_unique_hash(char *hash)  // `hash` points to up to 8 bytes of space.
 {
     // this is kinda cheesy, but it's good enough.
     static const char chartable[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    int notunique = 0;
     do {
         for (size_t i = 0; i < 6; i++) {
             hash[i] = chartable[((size_t) random()) % (sizeof (chartable)-1)];
         }
         hash[6] = '\0';
-    } while (!db_insert_used_hash(hash));  // !!! FIXME: a database failure (as opposed to a unique constraint clash) will cause an infinite loop here.
+
+        const int rc = db_insert_used_hash(hash, &notunique);
+        if (!rc && !notunique) {
+            return 0;  // database problem
+        }
+    } while (notunique); // not unique? Try again.
+
+    return 1;  // we're good.
 }
 
 
@@ -1309,6 +1323,13 @@ static int step_instance(Instance *inst, const int playernum, const char *input)
     return retval;
 }
 
+static void db_failed_at_instance_start(Instance *inst)
+{
+    broadcast_to_instance(inst, "\n\n*** Oh no, we failed to set up the database, so we're jumping ship! ***\n\n\n");
+    inst->dbid = 0;
+    inst->started = 0;  // don't try to archive this instance.
+    free_instance(inst);
+}
 
 static void inpfn_ingame(Connection *conn, const char *str);
 
@@ -1349,6 +1370,7 @@ static void start_instance(Instance *inst)
 
     const uint16 external_mem_objects_base = ZORK1_EXTERN_MEM_OBJS_BASE;  // ZORK 1 SPECIFIC MAGIC
 
+    int dbokay = 1;
     for (size_t i = 0; i < num_players; i++) {
         Player *player = &inst->players[i];
         Connection *conn = player->connection;
@@ -1394,7 +1416,8 @@ static void start_instance(Instance *inst)
 
         snprintf(player->againbuf, sizeof (player->againbuf), "verbose");  // typing "again" as the first command appears to do "verbose". Beats me.
 
-        generate_unique_hash(player->hash);  // assign a hash to the player while we're here so they can rejoin.
+        dbokay = dbokay && generate_unique_hash(player->hash);  // assign a hash to the player while we're here so they can rejoin.
+
         snprintf(player->username, sizeof (player->username), "%s", conn->username);
         write_to_connection(conn, "\n\n");
         write_to_connection(conn, "*** THE GAME IS STARTING ***\n");
@@ -1405,6 +1428,11 @@ static void start_instance(Instance *inst)
         write_to_connection(conn, player->hash);
         write_to_connection(conn, "'\n\n(Have fun!)\n\n\n");
         conn->inputfn = inpfn_ingame;
+    }
+
+    if (!dbokay) {
+        db_failed_at_instance_start(inst);
+        return;
     }
 
     inst->started = 1;
@@ -1458,7 +1486,7 @@ static void start_instance(Instance *inst)
         }
     }
 
-    int dbokay = db_begin_transaction();
+    dbokay = dbokay && db_begin_transaction();
     if (dbokay) {
         inst->dbid = db_insert_instance(inst);
         dbokay = dbokay && (inst->dbid != 0);
@@ -1478,10 +1506,7 @@ static void start_instance(Instance *inst)
     }
 
     if (!dbokay) {
-        broadcast_to_instance(inst, "\n\n*** Oh no, we failed to set up the database, so we're jumping ship! ***\n\n\n");
-        inst->dbid = 0;
-        inst->started = 0;  // don't try to archive this instance.
-        free_instance(inst);
+        db_failed_at_instance_start(inst);
     }
 }
 
@@ -1773,12 +1798,20 @@ static void inpfn_new_game_or_join(Connection *conn, const char *str)
         assert(!conn->instance);
         conn->instance = create_instance();
         if (!conn->instance) {
-            write_to_connection(conn, "Uhoh, we appear to be out of memory. Try again later?");
+            write_to_connection(conn, "Uhoh, we appear to be out of memory. Try again later?\n");
             drop_connection(conn);
             return;
         }
 
-        generate_unique_hash(conn->instance->hash);
+        if (!generate_unique_hash(conn->instance->hash)) {
+            write_to_connection(conn, "Uhoh, we appear to be having a database problem. Try again later?\n");
+            Instance *inst = conn->instance;
+            conn->instance = NULL;
+            db_failed_at_instance_start(inst);
+            drop_connection(conn);
+            return;
+        }
+
         loginfo("Created new instance '%s'", conn->instance->hash);
 
         conn->instance->players[0].connection = conn;
