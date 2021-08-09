@@ -1588,19 +1588,25 @@ static void free_instance(Instance *inst)
     free(inst);
 }
 
-static void inpfn_confirm_quit(Connection *conn, const char *str)
+static Player *find_connection_player(Connection *conn, int *_playernum)
 {
-    // !!! FIXME: can we just put a pointer to the Player in Connection?
     Instance *inst = conn->instance;
-    Player *player = NULL;
-    int playernum;
-    for (playernum = 0; playernum < inst->num_players; playernum++) {
-        if (inst->players[playernum].connection == conn) {
-            player = &inst->players[playernum];
-            break;
+    if (inst) {
+        for (int i = 0; i < inst->num_players; i++) {
+            if (inst->players[i].connection == conn) {
+                if (_playernum) { *_playernum = i; }
+                return &inst->players[i];
+            }
         }
     }
+    if (_playernum) { *_playernum = -1; }
+    return NULL;
+}
 
+
+static void inpfn_confirm_quit(Connection *conn, const char *str)
+{
+    Player *player = find_connection_player(conn, NULL);
     if (strcasecmp(str, "y") == 0) {
         if (player != NULL) {
             write_to_connection(conn, "\nOkay, you can come back to this game in progress with this code:\n");
@@ -1620,16 +1626,8 @@ static void inpfn_ingame(Connection *conn, const char *str)
 {
     Instance *inst = conn->instance;
     const uint32 newoutput_start = conn->outputbuf_used;
-
-    // !!! FIXME: can we just put a pointer to the Player in Connection?
-    Player *player = NULL;
     int playernum;
-    for (playernum = 0; playernum < inst->num_players; playernum++) {
-        if (inst->players[playernum].connection == conn) {
-            player = &inst->players[playernum];
-            break;
-        }
-    }
+    Player *player = find_connection_player(conn, &playernum);
 
     if (!player) {
         loginfo("Um, socket %d is trying to talk to instance '%s', which it is not a player on.", conn->sock, inst->hash);
