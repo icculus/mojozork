@@ -222,6 +222,15 @@ static size_t num_connections = 0;
     ");" \
     " " \
     "create index if not exists used_hashes_index on used_hashes (hashid);" \
+    " " \
+    "create table if not exists crashes (" \
+    " id integer primary key," \
+    " instance integer not null," \
+    " timestamp integer unsigned not null," \
+    " current_player integer unsigned not null," \
+    " logical_pc integer unsigned not null," \
+    " errstr text not null" \
+    ");"
 
 #define SQL_TRANSCRIPT_INSERT \
     "insert into transcripts (timestamp, player, isinput, content) values ($timestamp, $player, $isinput, $content);"
@@ -268,6 +277,11 @@ static size_t num_connections = 0;
 #define SQL_RECAP_SELECT \
     "select content from (select id, content from transcripts where player=$player order by id desc limit $limit) order by id;"
 
+#define SQL_CRASH_INSERT \
+    "insert into crashes (instance, timestamp, current_player, logical_pc, errstr)" \
+    " values ($instance, $timestamp, $current_player, $logical_pc, $errstr);"
+
+
 static sqlite3 *GDatabase = NULL;
 static sqlite3_stmt *GStmtBegin = NULL;
 static sqlite3_stmt *GStmtCommit = NULL;
@@ -281,6 +295,7 @@ static sqlite3_stmt *GStmtPlayerUpdate = NULL;
 static sqlite3_stmt *GStmtFindInstanceByPlayerHash = NULL;
 static sqlite3_stmt *GStmtPlayersSelect = NULL;
 static sqlite3_stmt *GStmtRecapSelect = NULL;
+static sqlite3_stmt *GStmtCrashInsert = NULL;
 
 static void db_log_error(const char *what)
 {
@@ -605,6 +620,27 @@ static int db_select_recap(Player *player, const int rows_of_recap)
     return 1;
 }
 
+static sqlite3_int64 db_insert_crash(const char *errstr)
+{
+    Instance *inst = (Instance *) GState;  // this works because zmachine_state is the first field in Instance.
+    if (!inst) {
+        return 0;
+    }
+
+    //"insert into crashes (instance, timestamp, current_player, logical_pc, errstr)"
+    //" values ($instance, $timestamp, $current_player, $logical_pc, $errstr);"
+    const sqlite3_int64 retval =
+           ( (sqlite3_reset(GStmtCrashInsert) == SQLITE_OK) &&
+             (SQLBINDINT64(GStmtCrashInsert, "instance", inst->dbid) == SQLITE_OK) &&
+             (SQLBINDINT64(GStmtCrashInsert, "timestamp", (sqlite3_int64) GNow) == SQLITE_OK) &&
+             (SQLBINDINT(GStmtCrashInsert, "logical_pc", GState->logical_pc) == SQLITE_OK) &&
+             (SQLBINDINT(GStmtCrashInsert, "current_player", inst->current_player) == SQLITE_OK) &&
+             (SQLBINDTEXT(GStmtCrashInsert, "errstr", errstr) == SQLITE_OK) &&
+             (sqlite3_step(GStmtCrashInsert) == SQLITE_DONE) ) ? sqlite3_last_insert_rowid(GDatabase) : 0;
+    if (!retval) { db_log_error("insert crash"); }
+    return retval;
+}
+
 
 static void db_init(void)
 {
@@ -669,6 +705,10 @@ static void db_init(void)
     if (sqlite3_prepare_v2(GDatabase, SQL_RECAP_SELECT, -1, &GStmtRecapSelect, NULL) != SQLITE_OK) {
         panic("Failed to create select recap SQL statement! %s", sqlite3_errmsg(GDatabase));
     }
+
+    if (sqlite3_prepare_v2(GDatabase, SQL_CRASH_INSERT, -1, &GStmtCrashInsert, NULL) != SQLITE_OK) {
+        panic("Failed to create crash insert SQL statement! %s", sqlite3_errmsg(GDatabase));
+    }
 }
 
 static void db_quit(void)
@@ -686,6 +726,7 @@ static void db_quit(void)
     FINALIZE_DB_STMT(GStmtPlayersSelect);
     FINALIZE_DB_STMT(GStmtFindInstanceByPlayerHash);
     FINALIZE_DB_STMT(GStmtRecapSelect);
+    FINALIZE_DB_STMT(GStmtCrashInsert);
     #undef FINALIZE_DB_STMT
 
     if (GDatabase) {
@@ -1046,7 +1087,6 @@ static void opcode_restart_multizork(void)
 static void opcode_quit_multizork(void)
 {
     Instance *inst = (Instance *) GState;  // this works because zmachine_state is the first field in Instance.
-    // !!! FIXME: decide if this was an expected endgame and die() as an error if not?
     GState->quit = 1;  // note that this should terminate the Z-Machine.
     inst->step_completed = 1;  // time to break out of the Z-Machine simulation loop.
 }
@@ -1070,7 +1110,7 @@ static void die_multizork(const char *fmt, ...)
     vsnprintf(err, sizeof (err), fmt, ap);
     va_end(ap);
 
-    // !!! FIXME: log this crash to the database for later examination.
+    db_insert_crash(err);
 
     snprintf(msg, sizeof (msg), "!! FATAL Z-MACHINE ERROR (instance='%s', err='%s', pc=%X, instructions_run=%u) !!", inst->hash, err, (uint) GState->logical_pc, (uint) GState->instructions_run);
     loginfo(msg);
