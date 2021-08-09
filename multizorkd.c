@@ -29,8 +29,11 @@
 #include "mojozork.c"
 
 #define MULTIZORKD_VERSION "0.0.1"
-#define MULTIZORKD_PORT 23  /* telnet! */
-#define MULTIZORKD_BACKLOG 64
+#define MULTIZORKD_DEFAULT_PORT 23  /* telnet! */
+#define MULTIZORKD_DEFAULT_BACKLOG 64
+#define MULTIZORKD_DEFAULT_EGID 0
+#define MULTIZORKD_DEFAULT_EUID 0
+
 
 typedef unsigned int uint;  // for cleaner printf casting.
 
@@ -2200,10 +2203,72 @@ static void signal_handler_shutdown(int sig)
     }
 }
 
+static void drop_privileges(const gid_t egid, const uid_t euid)
+{
+    // this is a list I took from another daemon. Dunno if it's a good list.
+    static const char *deleteenvs[] = { "PATH", "IFS", "CDPATH", "ENV", "BASH_ENV" };
+    for (int i = 0; i < ARRAYSIZE(deleteenvs); i++) {
+        unsetenv(deleteenvs[i]);
+    }
+
+    if (geteuid() == 0) {  /* if root... */
+        if (!egid && !euid) {
+            loginfo("");
+            loginfo("WARNING: YOU ARE RUNNING AS ROOT BUT NOT DROPPING PRIVILEGES!");
+            loginfo("WARNING: RESTART THIS PROCESS WITH THE --gid and --uid OPTIONS.");
+            loginfo("");
+        }
+
+        if (egid) {
+            if (setegid(egid) == -1) {
+                panic("Couldn't set effective GID to %d: %s", (int) egid, strerror(errno));
+            }
+            loginfo("Set effective group id to %d", (int) egid);
+        }
+
+        if (euid) {
+            if (seteuid(euid) == -1) {
+                panic("Couldn't set effective UID to %d: %s", (int) euid, strerror(errno));
+            }
+            loginfo("Set effective user id to %d", (int) euid);
+        }
+    }
+}
+
 // !!! FIXME: command line handling and less hardcoding.
 int main(int argc, char **argv)
 {
-    const char *storyfname = (argc >= 2) ? argv[1] : "zork1.dat";
+    const char *storyfname = NULL;
+    int port = MULTIZORKD_DEFAULT_PORT;
+    int backlog = MULTIZORKD_DEFAULT_BACKLOG;
+    gid_t egid = MULTIZORKD_DEFAULT_EGID;
+    uid_t euid = MULTIZORKD_DEFAULT_EUID;
+
+    for (int i = 1; i < argc; i++) {
+        const char *arg = argv[i];
+        if (strcmp(arg, "--gid") == 0) {
+            i++;
+            egid = (gid_t) (argv[i] ? atoi(argv[i]) : 0);
+        } else if (strcmp(arg, "--uid") == 0) {
+            i++;
+            euid = (uid_t) (argv[i] ? atoi(argv[i]) : 0);
+        } else if (strcmp(arg, "--port") == 0) {
+            i++;
+            port = argv[i] ? atoi(argv[i]) : 0;
+        } else if (strcmp(arg, "--backlog") == 0) {
+            i++;
+            backlog = argv[i] ? atoi(argv[i]) : 0;
+        } else {
+            if (storyfname != NULL) {
+                panic("Tried to choose two story files! '%s' and '%s'", storyfname, arg);
+            }
+            storyfname = arg;
+        }
+    }
+
+    if (!storyfname) {
+        storyfname = "zork1.dat";
+    }
 
     GNow = time(NULL);
     srandom((unsigned long) GNow);
@@ -2226,14 +2291,15 @@ int main(int argc, char **argv)
         panic("Out of memory creating pollfd array!");
     }
 
-    const int listensock = prep_listen_socket(MULTIZORKD_PORT, MULTIZORKD_BACKLOG);
+    const int listensock = prep_listen_socket(port, backlog);
     if (listensock == -1) {
         panic("Can't go on without a listen socket!");
     }
 
-    //drop_privileges();
+    drop_privileges(egid, euid);
 
-    loginfo("Now accepting connections on port %d (socket %d).", MULTIZORKD_PORT, listensock);
+    loginfo("Running with story '%s'", storyfname);
+    loginfo("Now accepting connections on port %d (socket %d).", port, listensock);
 
     while (GStopServer < 3) {
         pollfds[0].fd = listensock;
