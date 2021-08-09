@@ -1279,7 +1279,7 @@ static int step_instance(Instance *inst, const int playernum, const char *input)
     opcode_set_attr();
 
     // Now run the Z-Machine!
-    if (setjmp(inst->jmpbuf) == 0) {  // !!! FIXME: can we dump die() so we don't need this?
+    if (setjmp(inst->jmpbuf) == 0) {
         inst->step_completed = 0;  // opcode_quit or opcode_read, etc.
         while (!inst->step_completed) {
             runInstruction();
@@ -2308,7 +2308,6 @@ static void drop_privileges(const gid_t egid, const uid_t euid)
     }
 }
 
-// !!! FIXME: command line handling and less hardcoding.
 int main(int argc, char **argv)
 {
     const char *storyfname = NULL;
@@ -2388,9 +2387,9 @@ int main(int argc, char **argv)
         if (GStopServer && !num_connections) {
             pollrc = 0;
         } else if (GStopServer) {
-            pollrc = poll(pollfds + 1, num_connections, -1);  // !!! FIXME: timeout.
+            pollrc = poll(pollfds + 1, num_connections, -1);
         } else {
-            pollrc = poll(pollfds, num_connections + 1, -1);  // !!! FIXME: timeout.
+            pollrc = poll(pollfds, num_connections + 1, -1);
         }
 
         if (pollrc == -1) {
