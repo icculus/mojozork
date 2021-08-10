@@ -33,7 +33,7 @@
 #define MULTIZORKD_DEFAULT_BACKLOG 64
 #define MULTIZORKD_DEFAULT_EGID 0
 #define MULTIZORKD_DEFAULT_EUID 0
-
+#define MULTIZORK_TRANSCRIPT_BASEURL "https://multizork.icculus.org"
 
 typedef unsigned int uint;  // for cleaner printf casting.
 
@@ -1619,6 +1619,12 @@ static void inpfn_confirm_quit(Connection *conn, const char *str)
             write_to_connection(conn, "\nOkay, you can come back to this game in progress with this code:\n");
             write_to_connection(conn, "    ");
             write_to_connection(conn, player->hash);
+            write_to_connection(conn, "\n\n\n");
+            write_to_connection(conn, "And view transcripts from this game here:\n");
+            write_to_connection(conn, "    ");
+            write_to_connection(conn, MULTIZORK_TRANSCRIPT_BASEURL);
+            write_to_connection(conn, "/game/");
+            write_to_connection(conn, conn->instance->hash);
             write_to_connection(conn, "\n");
         }
         write_to_connection(conn, "\n\nGood bye!\n");
@@ -2489,16 +2495,18 @@ int main(int argc, char **argv)
                 Instance *inst = conn->instance;
                 write_to_connection(conn, "\n\n\nThis server is shutting down!\n\n");
                 if (inst && inst->started) {
-                    // !!! FIXME: a conn->player field would remove this search.
-                    for (size_t j = 0; j < ARRAYSIZE(inst->players); j++) {
-                        Player *player = &inst->players[j];
-                        if (player->connection == conn) {
-                            write_to_connection(conn, "When the server comes back up, you can rejoin this game with this code:\n");
-                            write_to_connection(conn, "    ");
-                            write_to_connection(conn, player->hash);
-                            write_to_connection(conn, "\n\n");
-                            break;
-                        }
+                    const Player *player = find_connection_player(conn, NULL);
+                    if (player) {
+                        write_to_connection(conn, "When the server comes back up, you can rejoin this game with this code:\n");
+                        write_to_connection(conn, "    ");
+                        write_to_connection(conn, player->hash);
+                        write_to_connection(conn, "\n\n");
+                        write_to_connection(conn, "And view transcripts from this game here:\n");
+                        write_to_connection(conn, "    ");
+                        write_to_connection(conn, MULTIZORK_TRANSCRIPT_BASEURL);
+                        write_to_connection(conn, "/game/");
+                        write_to_connection(conn, inst->hash);
+                        write_to_connection(conn, "\n\n");
                     }
                 }
             }
