@@ -1,6 +1,6 @@
 <?php
 
-$baseurl = '/';
+$baseurl = 'https://multizork.icculus.org';
 $dbname = 'multizork.sqlite3';
 $db = NULL;
 $title = 'multizork';
