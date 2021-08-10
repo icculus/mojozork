@@ -1810,6 +1810,13 @@ static void inpfn_enter_instance_code_to_join(Connection *conn, const char *str)
         write_to_connection(conn, "Sorry, I can't find that code. Try again or type 'quit'.");
     } else {
         write_to_connection(conn, "Found it!\n");
+
+        if ((inst->started) || (inst->crashed)) {
+            write_to_connection(conn, "...but it appears to have already started without you. Sorry!\n");
+            write_to_connection(conn, "You can enter a different code or type 'quit'\n");
+            return;
+        }
+
         for (size_t i = 0; i < ARRAYSIZE(inst->players); i++) {
             if (inst->players[i].connection == NULL) {
                 inst->players[i].connection = conn;
