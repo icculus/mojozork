@@ -102,8 +102,6 @@ if ($db == NULL) {
 }
 
 $reqargs = explode('/', preg_replace('/^\/?(.*?)\/?$/', '$1', $_SERVER['PHP_SELF']));
-array_shift($reqargs);
-array_shift($reqargs);
 $reqargcount = count($reqargs);
 //print_r($reqargs);
 
