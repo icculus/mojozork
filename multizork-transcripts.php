@@ -38,8 +38,9 @@ function display_instance($hashid)
         print("<li>number of players: {$instancerow['num_players']}</li>\n");
         print("<li>started: " . timestamp_to_string($instancerow['starttime']) . "</li>\n");
         print("<li>last saved: " . timestamp_to_string($instancerow['savetime']) . "</li>\n");
-        print("<li>Z-Machine instructions run: {$instancerow['instructions_run']}</li>\n");
-        print("<li>Transcripts available for players:");
+        print("<li>z-machine instructions run: {$instancerow['instructions_run']}</li>\n");
+        print("<li>game crashed: " . (($instancerow['crashed'] != 0) ? "YES" : "no") . "</li>\n");
+        print("<li>transcripts available for players:");
 
         $sawone = false;
         $stmt = $db->prepare('select * from players where instance = :instid order by id;');
@@ -64,19 +65,26 @@ function display_instance($hashid)
 function display_player($hashid)
 {
     global $db, $title, $baseurl;
-    $stmt = $db->prepare('select p.id, p.instance, p.username, i.hashid from players as p inner join instances as i on p.instance=i.id where p.hashid = :hashid limit 1;');
+    $stmt = $db->prepare('select p.id, p.instance, p.username, i.hashid, i.crashed from players as p inner join instances as i on p.instance=i.id where p.hashid = :hashid limit 1;');
     $stmt->bindValue(':hashid', "$hashid");
     $results = $stmt->execute();
     if ($row = $results->fetchArray()) {
+        $crashed = $row['crashed'];
+
         print("<html><head><title>$title - player $hashid</title></head><body>\n");
         print("<p><h1>Transcript for player '" . htmlspecialchars($row['username']) . "'</h1></p>\n");
         print("<p>Details on this run of the game: <a href='$baseurl/game/{$row['hashid']}'>[instance {$row['hashid']}]</a></p>\n");
+
 print("<pre>\n");
         $stmt = $db->prepare('select * from transcripts where player = :playerid order by id;');
         $stmt->bindValue(':playerid', $row['id']);
         $results = $stmt->execute();
         while ($row = $results->fetchArray()) {
             print(htmlspecialchars($row['content']));
+        }
+
+        if ($crashed != 0) {
+            print("\n\n  *** GAME INSTANCE CRASHED HERE ***\n\n");
         }
 print("</pre>\n");
         print("</body></html>\n\n");

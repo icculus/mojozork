@@ -133,6 +133,7 @@ typedef struct Instance
     int num_players;
     int step_completed;
     int current_player;   //  the player we're currently running the z-machine for.
+    sqlite3_int64 crashed;
     jmp_buf jmpbuf;
 } Instance;
 
@@ -170,7 +171,8 @@ static size_t num_connections = 0;
     " savetime integer unsigned not null," \
     " instructions_run integer unsigned not null," \
     " dynamic_memory blob not null," \
-    " story_filename text not null" \
+    " story_filename text not null," \
+    " crashed integer not null default 0" \
     ");" \
     " " \
     "create index if not exists instance_index on instances (hashid);" \
@@ -243,7 +245,7 @@ static size_t num_connections = 0;
     " values ($hashid, $num_players, $starttime, $savetime, $instructions_run, $dynamic_memory, $story_filename);"
 
 #define SQL_INSTANCE_UPDATE \
-    "update instances set savetime=$savetime, instructions_run=$instructions_run, dynamic_memory=$dynamic_memory where id=$id limit 1;"
+    "update instances set savetime=$savetime, instructions_run=$instructions_run, crashed=$crashed, dynamic_memory=$dynamic_memory where id=$id limit 1;"
 
 #define SQL_INSTANCE_SELECT \
     "select * from instances where id=$id limit 1;"
@@ -403,13 +405,14 @@ static sqlite3_int64 db_insert_instance(const Instance *inst)
 
 static int db_update_instance(const Instance *inst)
 {
-    //"update instances set savetime=$savetime, instructions_run=$instructions_run, dynamic_memory=$dynamic_memory where id=$id limit 1;"
+    //"update instances set savetime=$savetime, instructions_run=$instructions_run, crashed=$crashed, dynamic_memory=$dynamic_memory where id=$id limit 1;"
     assert(inst->dbid != 0);
     const int retval =
            ( (sqlite3_reset(GStmtInstanceUpdate) == SQLITE_OK) &&
              (SQLBINDINT64(GStmtInstanceUpdate, "savetime", (sqlite3_int64) GNow) == SQLITE_OK) &&
              (SQLBINDINT64(GStmtInstanceUpdate, "instructions_run", (sqlite3_int64) inst->zmachine_state.instructions_run) == SQLITE_OK) &&
              (SQLBINDBLOB(GStmtInstanceUpdate, "dynamic_memory", inst->zmachine_state.story, inst->zmachine_state.header.staticmem_addr) == SQLITE_OK) &&
+             (SQLBINDINT64(GStmtInstanceUpdate, "crashed", inst->crashed) == SQLITE_OK) &&
              (SQLBINDINT64(GStmtInstanceUpdate, "id", (sqlite3_int64) inst->dbid) == SQLITE_OK) &&
              (sqlite3_step(GStmtInstanceUpdate) == SQLITE_DONE) ) ? 1 : 0;
     if (!retval) { db_log_error("update instance"); }
@@ -534,6 +537,7 @@ static int db_select_instance(Instance *inst, const sqlite3_int64 dbid)
     inst->dbid = dbid;
     snprintf(inst->hash, sizeof (inst->hash), "%s", SQLCOLUMN(text, GStmtInstanceSelect, "hashid"));
     inst->num_players = SQLCOLUMN(int, GStmtInstanceSelect, "num_players");
+    inst->crashed = SQLCOLUMN(int64, GStmtInstanceSelect, "crashed");
     inst->zmachine_state.instructions_run = (uint32) SQLCOLUMN(int64, GStmtInstanceSelect, "instructions_run");
     const void *dynmem = SQLCOLUMN(blob, GStmtInstanceSelect, "dynamic_memory");
     size_t dynmemlen = SQLCOLUMN(bytes, GStmtInstanceSelect, "dynamic_memory");
@@ -1110,7 +1114,10 @@ static void die_multizork(const char *fmt, ...)
     vsnprintf(err, sizeof (err), fmt, ap);
     va_end(ap);
 
-    db_insert_crash(err);
+    inst->crashed = db_insert_crash(err);
+    if (!inst->crashed) {
+        inst->crashed = -1;  // just so we're non-zero.
+    }
 
     snprintf(msg, sizeof (msg), "!! FATAL Z-MACHINE ERROR (instance='%s', err='%s', pc=%X, instructions_run=%u) !!", inst->hash, err, (uint) GState->logical_pc, (uint) GState->instructions_run);
     loginfo(msg);
@@ -1959,6 +1966,12 @@ static Player *reconnect_player(Connection *conn, const char *access_code)
 
     if (!db_select_instance(inst, instance_dbid)) {
         write_to_connection(conn, "Hmm, that's a valid access code, but I had trouble starting the game! Try again later.\n");
+        free_instance(inst);
+        return NULL;
+    }
+
+    if (inst->crashed) {
+        write_to_connection(conn, "Hmm, that's a valid access code, but this game crashed before and can't be rejoined.\n");
         free_instance(inst);
         return NULL;
     }
