@@ -354,6 +354,7 @@ static int find_sql_bind_by_name(sqlite3_stmt *stmt, const char *name)
 #define SQLBINDTEXT(stmt, name, val) (sqlite3_bind_text((stmt), find_sql_bind_by_name((stmt), (name)), (val), -1, SQLITE_TRANSIENT))
 #define SQLBINDBLOB(stmt, name, val, len) (sqlite3_bind_blob((stmt), find_sql_bind_by_name((stmt), (name)), (val), len, SQLITE_TRANSIENT))
 #define SQLCOLUMN(typ, stmt, name) (sqlite3_column_##typ((stmt), find_sql_column_by_name((stmt), (name))))
+
 static sqlite3_int64 db_insert_transcript(const sqlite3_int64 player_dbid, const int isinput, const char *content)
 {
     //"insert into transcripts (timestamp, player, isinput, content) values ($timestamp, $player, $isinput, $content);"
@@ -822,10 +823,15 @@ static void broadcast_to_instance(Instance *inst, const char *str)
 {
     if (inst) {
         for (size_t i = 0; i < ARRAYSIZE(inst->players); i++) {
-            write_to_connection(inst->players[i].connection, str);
+            Player *player = &inst->players[i];
+            write_to_connection(player->connection, str);
+            if (i != inst->current_player) {  // these will transcribe with rest of buffer generated during inpfn_ingame.
+                db_insert_transcript(player->dbid, 0, str);
+            }
         }
     }
 }
+
 static void broadcast_to_room(Instance *inst, const uint16 room, const char *str)
 {
     if (inst) {
@@ -833,6 +839,9 @@ static void broadcast_to_room(Instance *inst, const uint16 room, const char *str
             Player *player = &inst->players[i];
             if (player->gvar_location == room) {
                 write_to_connection(player->connection, str);
+                if (i != inst->current_player) {  // these will transcribe with rest of buffer generated during inpfn_ingame.
+                    db_insert_transcript(player->dbid, 0, str);
+                }
             }
         }
     }
@@ -1140,6 +1149,8 @@ static Instance *create_instance(void)
             free(inst);
             return NULL;
         }
+
+        inst->current_player = -1;
         GState = &inst->zmachine_state;
         memcpy(story, GOriginalStory, GOriginalStoryLen);
         initStory(GOriginalStoryName, story, GOriginalStoryLen);
@@ -1366,6 +1377,7 @@ static int step_instance(Instance *inst, const int playernum, const char *input)
         retval = 0;
     }
 
+    inst->current_player = -1;
     GState = NULL;
     return retval;
 }
@@ -1638,9 +1650,10 @@ static void inpfn_confirm_quit(Connection *conn, const char *str)
 static void inpfn_ingame(Connection *conn, const char *str)
 {
     Instance *inst = conn->instance;
-    const uint32 newoutput_start = conn->outputbuf_used;
+    uint32 newoutput_start = conn->outputbuf_used;
     int playernum;
     Player *player = find_connection_player(conn, &playernum);
+    char msg[256];
 
     if (!player) {
         loginfo("Um, socket %d is trying to talk to instance '%s', which it is not a player on.", conn->sock, inst->hash);
@@ -1649,7 +1662,22 @@ static void inpfn_ingame(Connection *conn, const char *str)
         return;
     }
 
-    // The Z-Machine handles this normally, but I'm not sure how at the moment,
+    if ((strcasecmp(str, "q") == 0) || (strncasecmp(str, "quit", 4) == 0)) {
+        write_to_connection(conn, "Do you wish to leave the game? (Y is affirmative):");
+        conn->inputfn = inpfn_confirm_quit;
+        return;  // don't transcribe this part.
+    }
+
+    // we just go on without transcripts if there's a database problem. The best
+    //  we could do is drop the connections and know that it probably can't archive
+    //  the instance for return to later, so might as well let them play through.
+    db_begin_transaction();
+
+    // transcribe user input.
+    snprintf(msg, sizeof (msg), "%s\n", str);
+    db_insert_transcript(player->dbid, 1, msg);
+
+    // The Z-Machine normally handles this, but I'm not sure how at the moment,
     //  so rather than trying to track that data per-player, we just catch
     //  the AGAIN command here and replace it with the user's last in-game
     //  input.
@@ -1659,60 +1687,44 @@ static void inpfn_ingame(Connection *conn, const char *str)
         snprintf(player->againbuf, sizeof (player->againbuf), "%s", str);
     }
 
-    if ((strcasecmp(str, "q") == 0) || (strncasecmp(str, "quit", 4) == 0)) {
-        write_to_connection(conn, "Do you wish to leave the game? (Y is affirmative):");
-        conn->inputfn = inpfn_confirm_quit;
-        return;  // don't transcribe this part.
-    } else if (strncasecmp(str, "save", 4) == 0) {
+    if (strncasecmp(str, "save", 4) == 0) {
         write_to_connection(conn, "Requests to save the game are ignored, sorry.\n>");
     } else if (strncasecmp(str, "restore", 7) == 0) {
         write_to_connection(conn, "Requests to restory the game are ignored, sorry.\n>");
     } else if (str[0] == '!') {
         // !!! FIXME: filter to basic ASCII so they can't send terminal escape codes, etc.
         if (str[1] == '!') { // broadcast to whole instance
-            broadcast_to_instance(inst, "\n*** ");
-            broadcast_to_instance(inst, player->username);
-            broadcast_to_instance(inst, " says to the whole dungeon, \"");
-            broadcast_to_instance(inst, str + 2);
-            broadcast_to_instance(inst, "\" ***\n>");
+            snprintf(msg, sizeof (msg), "\n*** %s says to the whole dungeon, \"%s\" ***\n\n>", player->username, str + 2);
+            broadcast_to_instance(inst, msg);
         } else {
-            broadcast_to_room(inst, player->gvar_location, "\n*** ");
-            broadcast_to_room(inst, player->gvar_location, player->username);
-            broadcast_to_room(inst, player->gvar_location, " says to the room, \"");
-            broadcast_to_room(inst, player->gvar_location, str + 1);
-            broadcast_to_room(inst, player->gvar_location, "\" ***\n>");
+            snprintf(msg, sizeof (msg), "\n*** %s says to the room, \"%s\" ***\n\n>", player->username, str + 1);
+            broadcast_to_room(inst, player->gvar_location, msg);
         }
+        // skip this output: the broadcast_* functions already transcribed it (current_player is still -1 since we aren't stepping the instance yet).
+        newoutput_start = conn->outputbuf_used;
     } else {
         const uint16 loc = player->gvar_location;
         player->gvar_location = 0;  // so we don't broadcast to ourselves.
-        broadcast_to_room(inst, loc, "\n*** ");
-        broadcast_to_room(inst, loc, player->username);
-        broadcast_to_room(inst, loc, " decides to \"");
-        broadcast_to_room(inst, loc, str);
-        broadcast_to_room(inst, loc, "\" ***\n>");
+        snprintf(msg, sizeof (msg), "\n*** %s decides to \"%s\" ***\n>", player->username, str);
+        broadcast_to_room(inst, loc, msg);
         player->gvar_location = loc;
         step_instance(conn->instance, playernum, str);  // run the Z-machine with new input.
+
         const uint16 newloc = player->gvar_location;
         if (newloc != loc) { // player moved to a new room?
             player->gvar_location = 0;  // so we don't broadcast to ourselves.
-            broadcast_to_room(inst, loc, "\n*** ");
-            broadcast_to_room(inst, loc, player->username);
-            broadcast_to_room(inst, loc, " has left the area. ***\n>");
-            broadcast_to_room(inst, newloc, "\n*** ");
-            broadcast_to_room(inst, newloc, player->username);
-            broadcast_to_room(inst, newloc, " has entered the area. ***\n>");
+            snprintf(msg, sizeof (msg), "\n*** %s has left the area. ***\n>", player->username);
+            broadcast_to_room(inst, loc, msg);
+            snprintf(msg, sizeof (msg), "\n*** %s has entered the area. ***\n>", player->username);
+            broadcast_to_room(inst, newloc, msg);
             player->gvar_location = newloc;
         }
     }
 
-    // !!! FIXME: should we drop the connection (or instance?) if there's a database problem?
-    char strplusnl[sizeof (conn->inputbuf) + 1];
-    snprintf(strplusnl, sizeof (strplusnl), "%s\n", str);
-    db_begin_transaction();
-    db_insert_transcript(player->dbid, 1, strplusnl);
-    if (conn->outputbuf_used > newoutput_start) {  // new output to transcribe.
+    if (conn->outputbuf_used > newoutput_start) {  // new output to transcribe?
         db_insert_transcript(player->dbid, 0, conn->outputbuf + newoutput_start);
     }
+
     db_end_transaction();
 }
 
