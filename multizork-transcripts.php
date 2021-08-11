@@ -5,13 +5,36 @@ $dbname = 'multizork.sqlite3';
 $db = NULL;
 $title = 'multizork';
 
+function print_header($subtitle)
+{
+    global $title;
+    $str = <<<EOS
+<html>
+  <head>
+    <title>$title - $subtitle</title>
+  </head>
+  <body>
+EOS;
+    print($str);
+}
+
+function print_footer()
+{
+    $str = <<<EOS
+  </body>
+</html>
+EOS;
+    print($str);
+}
+
 function fail($response, $msg, $url = NULL)
 {
     global $title;
     header("HTTP/1.0 $response");
     if ($url != NULL) { header("Location: $url"); }
-    header('Content-Type: text/html; charset=utf-8');
-    print("<html><head><title>$title</title></head><body>\n<p><h1>$response</h1></p>\n\n<p>$msg</p>\n\n</body></html>\n");
+    print_header($response);
+    print("<p><h1>$response</h1></p>\n\n<p>$msg</p>\n");
+    print_footer();
     exit(1);
 }
 
@@ -31,7 +54,7 @@ function display_instance($hashid)
     $stmt->bindValue(':hashid', "$hashid");
     $results = $stmt->execute();
     if ($instancerow = $results->fetchArray()) {
-        print("<html><head><title>$title - game $hashid</title></head><body>\n");
+        print_header("game $hashid");
         print("<p><h1>Game instance '$hashid'</h1></p>\n");
         print("<p><ul>\n");
         print("<li>story file: '{$instancerow['story_filename']}'</li>\n");
@@ -56,7 +79,7 @@ function display_instance($hashid)
         }
 
         print("</li>\n</ul></p>\n");
-        print("</body></html>\n\n");
+        print_footer();
     } else {
         fail404("No such page");
     }
@@ -70,9 +93,9 @@ function display_player($hashid)
     $results = $stmt->execute();
     if ($row = $results->fetchArray()) {
         $crashed = $row['crashed'];
-
-        print("<html><head><title>$title - player $hashid</title></head><body>\n");
-        print("<p><h1>Transcript for player '" . htmlspecialchars($row['username']) . "'</h1></p>\n");
+        $escuname = htmlspecialchars($row['username']);
+        print_header("player $escuname");
+        print("<p><h1>Transcript for player '$escuname'</h1></p>\n");
         print("<p>Details on this run of the game: <a href='$baseurl/game/{$row['hashid']}'>[instance {$row['hashid']}]</a></p>\n");
 
 print("<pre>\n");
@@ -87,12 +110,16 @@ print("<pre>\n");
             print("\n\n  *** GAME INSTANCE CRASHED HERE ***\n\n");
         }
 print("</pre>\n");
-        print("</body></html>\n\n");
+        print_footer();
     } else {
         fail404("No such page");
     }
 }
 
+function display_mainpage()
+{
+    fail503("write me"); // !!! FIXME: show the main page
+}
 
 // Mainline!
 
@@ -109,7 +136,7 @@ $operation = ($reqargcount >= 1) ? $reqargs[0] : '';
 $document = ($reqargcount >= 2) ? $reqargs[1] : '';
 
 if ($operation == '') {
-    fail503("write me"); // !!! FIXME: show the main page
+    display_mainpage();
 } else if (($operation == 'game') && ($document != '')) {
     display_instance($document);
 } else if (($operation == 'player') && ($document != '')) {
