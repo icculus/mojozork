@@ -1,0 +1,17 @@
+[Unit]
+Description=multizorkd
+After=network.target remote-fs.target nss-lookup.target
+
+[Service]
+Type=simple
+WorkingDirectory=/webspace/multizork.icculus.org
+ExecStart=/webspace/multizork.icculus.org/multizorkd --uid 1000 --gid 1000
+ExecStop=/bin/kill -TERM $MAINPID
+Restart=always
+#StandardOutput=syslog
+#StandardError=syslog
+SyslogIdentifier=multizorkd
+
+[Install]
+WantedBy=multi-user.target
+
