@@ -1645,7 +1645,8 @@ static void inpfn_confirm_quit(Connection *conn, const char *str)
             write_to_connection(conn, MULTIZORK_TRANSCRIPT_BASEURL);
             write_to_connection(conn, "/game/");
             write_to_connection(conn, conn->instance->hash);
-            write_to_connection(conn, "\n");
+            write_to_connection(conn, "\n\nAnd don't forget to toss a dollar at my Patreon if you liked this:\n");
+            write_to_connection(conn, "    https://patreon.com/icculus\n");
         }
         write_to_connection(conn, "\n\nGood bye!\n");
         drop_connection(conn);
