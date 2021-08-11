@@ -2375,6 +2375,9 @@ int main(int argc, char **argv)
     gid_t egid = MULTIZORKD_DEFAULT_EGID;
     uid_t euid = MULTIZORKD_DEFAULT_EUID;
 
+    setvbuf(stdout, NULL, _IOLBF, 0);  // make sure output is line-buffered.
+    setvbuf(stderr, NULL, _IOLBF, 0);  // make sure output is line-buffered.
+
     for (int i = 1; i < argc; i++) {
         const char *arg = argv[i];
         if (strcmp(arg, "--gid") == 0) {
