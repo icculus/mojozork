@@ -8,9 +8,11 @@ WorkingDirectory=/webspace/multizork.icculus.org
 ExecStart=/webspace/multizork.icculus.org/multizorkd --uid 1000 --gid 1000
 ExecStop=/bin/kill -TERM $MAINPID
 Restart=always
-#StandardOutput=syslog
-#StandardError=syslog
+StandardOutput=journal
+StandardError=journal
 SyslogIdentifier=multizorkd
+ProtectSystem=true
+ProtectHome=true
 
 [Install]
 WantedBy=multi-user.target
