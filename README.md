@@ -1,7 +1,7 @@
 # MojoZork
 
 ```
-> read leaflet
+>read leaflet
 ```
 
 Hello sailor!
