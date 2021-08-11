@@ -2232,7 +2232,8 @@ static int accept_new_connection(const int listensock)
 
     loginfo("New connection from %s (socket %d)", conn->address, sock);
 
-    write_to_connection(conn, "\n\nHello sailor!\n\nIf you are returning, go ahead and type in your access code.\nOtherwise, just press enter.\n\n>");
+    write_to_connection(conn, "\n(version " MULTIZORKD_VERSION " built " __DATE__ " " __TIME__ ".)\n\n\n");
+    write_to_connection(conn, "Hello sailor!\n\nIf you are returning, go ahead and type in your access code.\nOtherwise, just press enter.\n\n>");
 
     return sock;
 }
