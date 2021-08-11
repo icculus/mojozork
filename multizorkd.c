@@ -213,7 +213,7 @@ static size_t num_connections = 0;
     " id integer primary key," \
     " timestamp integer unsigned not null," \
     " player integer not null," \
-    " isinput integer not null," \
+    " texttype integer not null," \
     " content text not null" \
     ");" \
     " " \
@@ -235,7 +235,7 @@ static size_t num_connections = 0;
     ");"
 
 #define SQL_TRANSCRIPT_INSERT \
-    "insert into transcripts (timestamp, player, isinput, content) values ($timestamp, $player, $isinput, $content);"
+    "insert into transcripts (timestamp, player, texttype, content) values ($timestamp, $player, $texttype, $content);"
 
 #define SQL_USED_HASH_INSERT \
     "insert into used_hashes (hashid) values ($hashid);"
@@ -355,14 +355,22 @@ static int find_sql_bind_by_name(sqlite3_stmt *stmt, const char *name)
 #define SQLBINDBLOB(stmt, name, val, len) (sqlite3_bind_blob((stmt), find_sql_bind_by_name((stmt), (name)), (val), len, SQLITE_TRANSIENT))
 #define SQLCOLUMN(typ, stmt, name) (sqlite3_column_##typ((stmt), find_sql_column_by_name((stmt), (name))))
 
-static sqlite3_int64 db_insert_transcript(const sqlite3_int64 player_dbid, const int isinput, const char *content)
+typedef enum TranscriptTextType
 {
-    //"insert into transcripts (timestamp, player, isinput, content) values ($timestamp, $player, $isinput, $content);"
+    TT_GAME_OUTPUT = 0,
+    TT_PLAYER_INPUT,
+    TT_SYSTEM_MESSAGE
+} TranscriptTextType;
+
+
+static sqlite3_int64 db_insert_transcript(const sqlite3_int64 player_dbid, const TranscriptTextType texttype, const char *content)
+{
+    //"insert into transcripts (timestamp, player, texttype, content) values ($timestamp, $player, $texttype, $content);"
     const sqlite3_int64 retval =
            ( (sqlite3_reset(GStmtTranscriptInsert) == SQLITE_OK) &&
              (SQLBINDINT64(GStmtTranscriptInsert, "timestamp", (sqlite3_int64) GNow) == SQLITE_OK) &&
              (SQLBINDINT64(GStmtTranscriptInsert, "player", player_dbid) == SQLITE_OK) &&
-             (SQLBINDINT(GStmtTranscriptInsert, "isinput", isinput) == SQLITE_OK) &&
+             (SQLBINDINT(GStmtTranscriptInsert, "texttype", (int) texttype) == SQLITE_OK) &&
              (SQLBINDTEXT(GStmtTranscriptInsert, "content", content) == SQLITE_OK) &&
              (sqlite3_step(GStmtTranscriptInsert) == SQLITE_DONE) ) ? sqlite3_last_insert_rowid(GDatabase) : 0;
     if (!retval) { db_log_error("insert transcript"); }
@@ -826,7 +834,7 @@ static void broadcast_to_instance(Instance *inst, const char *str)
             Player *player = &inst->players[i];
             write_to_connection(player->connection, str);
             if (i != inst->current_player) {  // these will transcribe with rest of buffer generated during inpfn_ingame.
-                db_insert_transcript(player->dbid, 0, str);
+                db_insert_transcript(player->dbid, TT_SYSTEM_MESSAGE, str);
             }
         }
     }
@@ -840,7 +848,7 @@ static void broadcast_to_room(Instance *inst, const uint16 room, const char *str
             if (player->gvar_location == room) {
                 write_to_connection(player->connection, str);
                 if (i != inst->current_player) {  // these will transcribe with rest of buffer generated during inpfn_ingame.
-                    db_insert_transcript(player->dbid, 0, str);
+                    db_insert_transcript(player->dbid, TT_SYSTEM_MESSAGE, str);
                 }
             }
         }
@@ -1555,7 +1563,7 @@ static void start_instance(Instance *inst)
                 player->dbid = db_insert_player(inst, i);
                 dbokay = dbokay && (player->dbid != 0);
                 if (player->connection) {
-                    dbokay = dbokay && db_insert_transcript(player->dbid, 0, player->connection->outputbuf + outputbuf_used_at_start[i]);
+                    dbokay = dbokay && db_insert_transcript(player->dbid, TT_GAME_OUTPUT, player->connection->outputbuf + outputbuf_used_at_start[i]);
                 }
             }
         }
@@ -1675,7 +1683,7 @@ static void inpfn_ingame(Connection *conn, const char *str)
 
     // transcribe user input.
     snprintf(msg, sizeof (msg), "%s\n", str);
-    db_insert_transcript(player->dbid, 1, msg);
+    db_insert_transcript(player->dbid, TT_PLAYER_INPUT, msg);
 
     // The Z-Machine normally handles this, but I'm not sure how at the moment,
     //  so rather than trying to track that data per-player, we just catch
@@ -1722,7 +1730,7 @@ static void inpfn_ingame(Connection *conn, const char *str)
     }
 
     if (conn->outputbuf_used > newoutput_start) {  // new output to transcribe?
-        db_insert_transcript(player->dbid, 0, conn->outputbuf + newoutput_start);
+        db_insert_transcript(player->dbid, TT_GAME_OUTPUT, conn->outputbuf + newoutput_start);
     }
 
     db_end_transaction();
