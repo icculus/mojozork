@@ -2246,9 +2246,9 @@ static int prep_listen_socket(const int port, const int backlog)
     struct addrinfo *ainfo = NULL;
 
     memset(&hints, '\0', sizeof (hints));
-    hints.ai_family = AF_UNSPEC;    // Allow IPv4 or IPv6
+    hints.ai_family = AF_INET6;
     hints.ai_socktype = SOCK_STREAM;
-    hints.ai_flags = AI_NUMERICSERV | AI_PASSIVE;    // AI_PASSIVE for the "any" address.
+    hints.ai_flags = AI_V4MAPPED | AI_NUMERICSERV | AI_PASSIVE;    // AI_PASSIVE for the "any" address.
     snprintf(service, sizeof (service), "%u", (uint) port);
     const int gairc = getaddrinfo(NULL, service, &hints, &ainfo);
     if (gairc != 0) {
