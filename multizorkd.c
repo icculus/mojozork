@@ -1281,10 +1281,10 @@ static int step_instance(Instance *inst, const int playernum, const char *input)
             const char ch = *ptr;
             if ((ch >= 'A') && (ch <= 'Z')) {
                 *ptr = 'a' + (ch - 'A');  // lowercase it.
-            } else if ((ch >= 'a') && (ch <= 'z')) {
+            } else if (((ch >= 'a') && (ch <= 'z')) || ((ch >= '0') && (ch <= '9')) || (strchr(" .,!?_#'\"/\\-:()", ch) != NULL)) {
                 /* cool */ ;
-            } else if ((ch != ',') && (ch != '.') && (ch != ' ') && (ch != '\"')) {
-                *ptr = ' ';  /* oh well. */
+            } else {
+                *ptr = ' ';  /* oh well, blank it out. */
             }
         }
 
@@ -1700,7 +1700,6 @@ static void inpfn_ingame(Connection *conn, const char *str)
     } else if (strncasecmp(str, "restore", 7) == 0) {
         write_to_connection(conn, "Requests to restory the game are ignored, sorry.\n>");
     } else if (str[0] == '!') {
-        // !!! FIXME: filter to basic ASCII so they can't send terminal escape codes, etc.
         if (str[1] == '!') { // broadcast to whole instance
             snprintf(msg, sizeof (msg), "\n*** %s says to the whole dungeon, \"%s\" ***\n\n>", player->username, str + 2);
             broadcast_to_instance(inst, msg);
@@ -2070,10 +2069,24 @@ static void trim(char *str)
     *i = '\0';
 }
 
+// this is a bit of a cheat, but it eliminates escape codes, unicode stuff,
+//  etc that we aren't prepared to handle and might be passed to other
+//  players maliciously.
+static void sanitize_to_low_ascii(char *str)
+{
+    for (size_t i = 0; str[i]; i++) {
+        if ((str[i] < 32) || (str[i] > 126)) {
+            str[i] = ' ';
+        }
+    }
+}
+
 static void process_connection_command(Connection *conn)
 {
     conn->inputbuf[conn->inputbuf_used] = '\0';  // null-terminate the input.
+    sanitize_to_low_ascii(conn->inputbuf);
     trim(conn->inputbuf);
+
     loginfo("New input from socket %d: '%s'", conn->sock, conn->inputbuf);
 
     conn->inputfn(conn, conn->inputbuf);
