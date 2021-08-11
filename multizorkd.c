@@ -518,7 +518,7 @@ static int db_update_player(const Instance *inst, const int playernum)
 static sqlite3_int64 db_find_instance_by_player_hash(const char *hashid)
 {
     //"select instance from players where hashid=$hashid limit 1;"
-    int rc;
+    int rc = SQLITE_ERROR;
     if ( (sqlite3_reset(GStmtFindInstanceByPlayerHash) != SQLITE_OK) ||
          (SQLBINDTEXT(GStmtFindInstanceByPlayerHash, "hashid", hashid) != SQLITE_OK) ||
          ((rc = sqlite3_step(GStmtFindInstanceByPlayerHash)) != SQLITE_ROW) ) {
@@ -535,7 +535,7 @@ static int db_select_instance(Instance *inst, const sqlite3_int64 dbid)
     assert(!inst->dbid);
 
     //"select * from instances where id=$id limit 1;"
-    int rc;
+    int rc = SQLITE_ERROR;
     if ( (sqlite3_reset(GStmtInstanceSelect) != SQLITE_OK) ||
          (SQLBINDINT64(GStmtInstanceSelect, "id", dbid) != SQLITE_OK) ||
          ((rc = sqlite3_step(GStmtInstanceSelect)) != SQLITE_ROW) ) {
