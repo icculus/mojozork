@@ -34,6 +34,7 @@
 #define MULTIZORKD_DEFAULT_EGID 0
 #define MULTIZORKD_DEFAULT_EUID 0
 #define MULTIZORK_TRANSCRIPT_BASEURL "https://multizork.icculus.org"
+#define MULTIZORK_BLOCKED_TIMEOUT (60 * 60 * 24)  /* 24 hours in seconds */
 
 typedef unsigned int uint;  // for cleaner printf casting.
 
@@ -232,7 +233,16 @@ static size_t num_connections = 0;
     " current_player integer unsigned not null," \
     " logical_pc integer unsigned not null," \
     " errstr text not null" \
-    ");"
+    ");" \
+    " " \
+    "create table if not exists blocked (" \
+    " id integer primary key," \
+    " address text not null," \
+    " timestamp integer unsigned not null" \
+    ");" \
+    " " \
+    "create index if not exists blocked_index on blocked (address);" \
+
 
 #define SQL_TRANSCRIPT_INSERT \
     "insert into transcripts (timestamp, player, texttype, content) values ($timestamp, $player, $texttype, $content);"
@@ -283,6 +293,12 @@ static size_t num_connections = 0;
     "insert into crashes (instance, timestamp, current_player, logical_pc, errstr)" \
     " values ($instance, $timestamp, $current_player, $logical_pc, $errstr);"
 
+#define SQL_BLOCKED_INSERT \
+    "insert into blocked (address, timestamp) values ($address, $timestamp);"
+
+#define SQL_BLOCKED_SELECT \
+    "select timestamp from blocked where address = $address order by id desc limit 1;"
+
 
 static sqlite3 *GDatabase = NULL;
 static sqlite3_stmt *GStmtBegin = NULL;
@@ -298,6 +314,9 @@ static sqlite3_stmt *GStmtFindInstanceByPlayerHash = NULL;
 static sqlite3_stmt *GStmtPlayersSelect = NULL;
 static sqlite3_stmt *GStmtRecapSelect = NULL;
 static sqlite3_stmt *GStmtCrashInsert = NULL;
+static sqlite3_stmt *GStmtBlockedInsert = NULL;
+static sqlite3_stmt *GStmtBlockedSelect = NULL;
+
 
 static void db_log_error(const char *what)
 {
@@ -654,6 +673,35 @@ static sqlite3_int64 db_insert_crash(const char *errstr)
     return retval;
 }
 
+static sqlite3_int64 db_insert_blocked(const char *address)
+{
+    //"insert into blocked (address, timestamp) values ($address, $timestamp);"
+    const sqlite3_int64 retval =
+           ( (sqlite3_reset(GStmtBlockedInsert) == SQLITE_OK) &&
+             (SQLBINDTEXT(GStmtBlockedInsert, "address", address) == SQLITE_OK) &&
+             (SQLBINDINT64(GStmtBlockedInsert, "timestamp", (sqlite3_int64) GNow) == SQLITE_OK) &&
+             (sqlite3_step(GStmtBlockedInsert) == SQLITE_DONE) ) ? sqlite3_last_insert_rowid(GDatabase) : 0;
+    if (!retval) { db_log_error("insert blocked"); }
+    return retval;
+}
+
+static sqlite3_int64 db_select_blocked(const char *address)
+{
+    //"select timestamp from blocked where address = $address order by id desc limit 1;"
+    int rc = SQLITE_ERROR;
+    if ( (sqlite3_reset(GStmtBlockedSelect) != SQLITE_OK) ||
+         (SQLBINDTEXT(GStmtBlockedSelect, "address", address) != SQLITE_OK) ||
+         ((rc = sqlite3_step(GStmtBlockedSelect)) != SQLITE_ROW) ) {
+        if (rc != SQLITE_DONE) {  // DONE == address was never blocked (no results).
+            db_log_error("select blocked");
+        }
+        return 0;  // let it through even if an error.
+    }
+
+    const sqlite3_int64 retval = SQLCOLUMN(int64, GStmtBlockedSelect, "timestamp");
+    sqlite3_reset(GStmtRecapSelect);
+    return retval;
+}
 
 static void db_init(void)
 {
@@ -722,6 +770,14 @@ static void db_init(void)
     if (sqlite3_prepare_v2(GDatabase, SQL_CRASH_INSERT, -1, &GStmtCrashInsert, NULL) != SQLITE_OK) {
         panic("Failed to create crash insert SQL statement! %s", sqlite3_errmsg(GDatabase));
     }
+
+    if (sqlite3_prepare_v2(GDatabase, SQL_BLOCKED_INSERT, -1, &GStmtBlockedInsert, NULL) != SQLITE_OK) {
+        panic("Failed to create blocked insert SQL statement! %s", sqlite3_errmsg(GDatabase));
+    }
+
+    if (sqlite3_prepare_v2(GDatabase, SQL_BLOCKED_SELECT, -1, &GStmtBlockedSelect, NULL) != SQLITE_OK) {
+        panic("Failed to create blocked select SQL statement! %s", sqlite3_errmsg(GDatabase));
+    }
 }
 
 static void db_quit(void)
@@ -740,6 +796,8 @@ static void db_quit(void)
     FINALIZE_DB_STMT(GStmtFindInstanceByPlayerHash);
     FINALIZE_DB_STMT(GStmtRecapSelect);
     FINALIZE_DB_STMT(GStmtCrashInsert);
+    FINALIZE_DB_STMT(GStmtBlockedInsert);
+    FINALIZE_DB_STMT(GStmtBlockedSelect);
     #undef FINALIZE_DB_STMT
 
     if (GDatabase) {
@@ -2040,6 +2098,23 @@ static void inpfn_hello_sailor(Connection *conn, const char *str)
         write_to_connection(conn, " This is American tech from 1980, after all.)");
         conn->inputfn = inpfn_enter_name;
     } else {
+        // popular bots that troll telnet ports looking to pop a shell will send these as first commands. Dump them.
+        static const char *hacker_commands[] = { "system", "shell", "sh" };
+        for (int i = 0; i < ARRAYSIZE(hacker_commands); i++) {
+            if (strcmp(str, hacker_commands[i]) == 0) {
+                const char *addr = conn->address;
+                loginfo("Socket %d (%s) is probably malicious, blocked and dropped.", conn->sock, addr);
+                if ((strcmp(addr, "127.0.0.1") == 0) || (strcmp(addr, "::ffff:127.0.0.1") == 0) || (strcmp(addr, "::1") == 0)) {
+                    loginfo("(not actually blocking localhost.)");
+                } else {
+                    db_insert_blocked(conn->address);
+                }
+                write_to_connection(conn, "Nice try.\n");
+                drop_connection(conn);
+                return;
+            }
+        }
+
         // look up player code.
         Player *player = reconnect_player(conn, str);
         if (!player) {
@@ -2246,8 +2321,16 @@ static int accept_new_connection(const int listensock)
 
     loginfo("New connection from %s (socket %d). %d current connections.", conn->address, sock, num_connections);
 
-    write_to_connection(conn, "\n(version " MULTIZORKD_VERSION " built " __DATE__ " " __TIME__ ".)\n\n\n");
-    write_to_connection(conn, "Hello sailor!\n\nIf you are returning, go ahead and type in your access code.\nOtherwise, just press enter.\n\n>");
+    const sqlite_int64 blocked_timestamp = db_select_blocked(conn->address);
+    const int block_length = (int) (((sqlite_int64) GNow) - blocked_timestamp);
+    if (blocked_timestamp && (block_length < MULTIZORK_BLOCKED_TIMEOUT)) {
+        loginfo("Address %s (socket %d) is blocked for %d more seconds, dropping.", conn->address, sock, MULTIZORK_BLOCKED_TIMEOUT - block_length);
+        write_to_connection(conn, "Sorry, this address is currently blocked.\n");
+        drop_connection(conn);
+    } else {
+        write_to_connection(conn, "\n(version " MULTIZORKD_VERSION " built " __DATE__ " " __TIME__ ".)\n\n\n");
+        write_to_connection(conn, "Hello sailor!\n\nIf you are returning, go ahead and type in your access code.\nOtherwise, just press enter.\n\n>");
+    }
 
     return sock;
 }
