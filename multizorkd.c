@@ -2490,7 +2490,7 @@ int main(int argc, char **argv)
     GNow = time(NULL);
     srandom((unsigned long) GNow);
 
-    loginfo("multizork daemon %s starting up...", MULTIZORKD_VERSION);
+    loginfo("multizork daemon " MULTIZORKD_VERSION " (built " __DATE__ " " __TIME__ ") starting up...");
 
     signal(SIGPIPE, SIG_IGN);
     signal(SIGINT, signal_handler_shutdown);
