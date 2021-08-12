@@ -2244,7 +2244,7 @@ static int accept_new_connection(const int listensock)
         snprintf(conn->address, sizeof (conn->address), "???");
     }
 
-    loginfo("New connection from %s (socket %d)", conn->address, sock);
+    loginfo("New connection from %s (socket %d). %d current connections.", conn->address, sock, num_connections);
 
     write_to_connection(conn, "\n(version " MULTIZORKD_VERSION " built " __DATE__ " " __TIME__ ".)\n\n\n");
     write_to_connection(conn, "Hello sailor!\n\nIf you are returning, go ahead and type in your access code.\nOtherwise, just press enter.\n\n>");
@@ -2515,7 +2515,7 @@ int main(int argc, char **argv)
                 const int rc = (conn->sock < 0) ? 0 : close(conn->sock);
                 // closed, or failed for a reason other than still trying to flush final writes, dump it.
                 if ((rc == 0) || ((errno != EAGAIN) && (errno != EWOULDBLOCK))) {
-                    loginfo("Closed socket %d, removing connection object.", conn->sock);
+                    loginfo("Closed socket %d, removing connection object. %d current connections.", conn->sock, num_connections-1);
                     free(conn->outputbuf);
                     if (i != (num_connections-1)) {
                         memmove(connections + i, connections + i + 1, sizeof (*connections) * ((num_connections - i) - 1));
