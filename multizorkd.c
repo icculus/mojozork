@@ -154,6 +154,7 @@ struct Connection
     uint32 outputbuf_len;
     uint32 outputbuf_used;
     time_t last_activity;
+    int blocked;
 };
 
 static Connection **connections = NULL;
@@ -2106,6 +2107,7 @@ static void inpfn_hello_sailor(Connection *conn, const char *str)
                 loginfo("Socket %d (%s) is probably malicious, blocked and dropped.", conn->sock, addr);
                 if ((strcmp(addr, "127.0.0.1") == 0) || (strcmp(addr, "::ffff:127.0.0.1") == 0) || (strcmp(addr, "::1") == 0)) {
                     loginfo("(not actually blocking localhost.)");
+                    conn->blocked = 1;  // ...but _do_ drop this connection's further input.
                 } else {
                     db_insert_blocked(conn->address);
                 }
@@ -2163,7 +2165,11 @@ static void process_connection_command(Connection *conn)
     sanitize_to_low_ascii(conn->inputbuf);
     trim(conn->inputbuf);
 
-    loginfo("New input from socket %d: '%s'", conn->sock, conn->inputbuf);
+    loginfo("New input from socket %d%s: '%s'", conn->sock, conn->blocked ? " (blocked)" : "", conn->inputbuf);
+
+    if (conn->blocked){
+        return;  // don't process this input further.
+    }
 
     conn->inputfn(conn, conn->inputbuf);
     if (conn->state == CONNSTATE_READY) {
