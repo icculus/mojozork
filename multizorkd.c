@@ -2095,7 +2095,7 @@ static void inpfn_hello_sailor(Connection *conn, const char *str)
     if (*str == '\0') {  // just hit enter without a specific code?
         write_to_connection(conn, "Okay, let's get you set up.\n\n");
         write_to_connection(conn, "What's your name? Keep it simple or I'll simplify it for you.\n");
-        write_to_connection(conn, "(sorry if you're name isn't one word made up of english letters.\n");
+        write_to_connection(conn, "(sorry if your name isn't one word made up of english letters.\n");
         write_to_connection(conn, " This is American tech from 1980, after all.)");
         conn->inputfn = inpfn_enter_name;
     } else {
