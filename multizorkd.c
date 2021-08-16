@@ -35,6 +35,7 @@
 #define MULTIZORKD_DEFAULT_EUID 0
 #define MULTIZORK_TRANSCRIPT_BASEURL "https://multizork.icculus.org"
 #define MULTIZORK_BLOCKED_TIMEOUT (60 * 60 * 24)  /* 24 hours in seconds */
+#define MULTIZORK_AUTOSAVE_EVERY_X_MOVES 50
 
 typedef unsigned int uint;  // for cleaner printf casting.
 
@@ -134,6 +135,8 @@ typedef struct Instance
     int num_players;
     int step_completed;
     int current_player;   //  the player we're currently running the z-machine for.
+    time_t savetime;
+    int moves_since_last_save;
     sqlite3_int64 crashed;
     jmp_buf jmpbuf;
 } Instance;
@@ -300,6 +303,9 @@ static size_t num_connections = 0;
 #define SQL_BLOCKED_SELECT \
     "select timestamp from blocked where address = $address order by id desc limit 1;"
 
+#define SQL_RECAP_TRIM \
+    "delete from transcripts where player = $player and timestamp > $savetime;"
+
 
 static sqlite3 *GDatabase = NULL;
 static sqlite3_stmt *GStmtBegin = NULL;
@@ -317,6 +323,7 @@ static sqlite3_stmt *GStmtRecapSelect = NULL;
 static sqlite3_stmt *GStmtCrashInsert = NULL;
 static sqlite3_stmt *GStmtBlockedInsert = NULL;
 static sqlite3_stmt *GStmtBlockedSelect = NULL;
+static sqlite3_stmt *GStmtRecapTrim = NULL;
 
 
 static void db_log_error(const char *what)
@@ -566,6 +573,7 @@ static int db_select_instance(Instance *inst, const sqlite3_int64 dbid)
     inst->dbid = dbid;
     snprintf(inst->hash, sizeof (inst->hash), "%s", SQLCOLUMN(text, GStmtInstanceSelect, "hashid"));
     inst->num_players = SQLCOLUMN(int, GStmtInstanceSelect, "num_players");
+    inst->savetime = (time_t) SQLCOLUMN(int64, GStmtInstanceSelect, "savetime");
     inst->crashed = SQLCOLUMN(int64, GStmtInstanceSelect, "crashed");
     inst->zmachine_state.instructions_run = (uint32) SQLCOLUMN(int64, GStmtInstanceSelect, "instructions_run");
     const void *dynmem = SQLCOLUMN(blob, GStmtInstanceSelect, "dynamic_memory");
@@ -704,6 +712,19 @@ static sqlite3_int64 db_select_blocked(const char *address)
     return retval;
 }
 
+static void db_trim_recap(Instance *inst)
+{
+    //"delete from transcripts where player = $player and timestamp > $savetime;"
+    for (int i = 0; i < inst->num_players; i++) {
+        if ( (sqlite3_reset(GStmtRecapTrim) != SQLITE_OK) ||
+             (SQLBINDINT64(GStmtRecapTrim, "player", inst->players[i].dbid) != SQLITE_OK) ||
+             (SQLBINDINT64(GStmtRecapTrim, "savetime", (sqlite3_int64) inst->savetime) != SQLITE_OK) ||
+             (sqlite3_step(GStmtRecapTrim) != SQLITE_DONE) ) {
+            db_log_error("trim recap");
+        }
+    }
+}
+
 static void db_init(void)
 {
     char *errmsg = NULL;
@@ -779,6 +800,10 @@ static void db_init(void)
     if (sqlite3_prepare_v2(GDatabase, SQL_BLOCKED_SELECT, -1, &GStmtBlockedSelect, NULL) != SQLITE_OK) {
         panic("Failed to create blocked select SQL statement! %s", sqlite3_errmsg(GDatabase));
     }
+
+    if (sqlite3_prepare_v2(GDatabase, SQL_RECAP_TRIM, -1, &GStmtRecapTrim, NULL) != SQLITE_OK) {
+        panic("Failed to create recap trim SQL statement! %s", sqlite3_errmsg(GDatabase));
+    }
 }
 
 static void db_quit(void)
@@ -799,6 +824,7 @@ static void db_quit(void)
     FINALIZE_DB_STMT(GStmtCrashInsert);
     FINALIZE_DB_STMT(GStmtBlockedInsert);
     FINALIZE_DB_STMT(GStmtBlockedSelect);
+    FINALIZE_DB_STMT(GStmtRecapTrim);
     #undef FINALIZE_DB_STMT
 
     if (GDatabase) {
@@ -1614,6 +1640,7 @@ static void start_instance(Instance *inst)
 
     dbokay = dbokay && db_begin_transaction();
     if (dbokay) {
+        inst->savetime = GNow;
         inst->dbid = db_insert_instance(inst);
         dbokay = dbokay && (inst->dbid != 0);
         for (int i = 0; i < num_players; i++) {
@@ -1636,6 +1663,22 @@ static void start_instance(Instance *inst)
     }
 }
 
+static void save_instance(Instance *inst)
+{
+    if (inst->started && inst->dbid) {  // if game started, save the state. If not, just drop the resources.
+        // not much we can do if this fails...
+        loginfo("Saving instance '%s'...", inst->hash);
+        if (db_begin_transaction()) {
+            db_update_instance(inst);
+            for (int i = 0; i < inst->num_players; i++) {
+                db_update_player(inst, i);
+            }
+            db_end_transaction();
+        }
+        inst->savetime = GNow;
+    }
+}
+
 static void free_instance(Instance *inst)
 {
     if (!inst) {
@@ -1654,16 +1697,7 @@ static void free_instance(Instance *inst)
         }
     }
 
-    if (inst->started && inst->dbid) {  // if game started, save the state. If not, just drop the resources.
-        // not much we can do if this fails...
-        if (db_begin_transaction()) {
-            db_update_instance(inst);
-            for (int i = 0; i < inst->num_players; i++) {
-                db_update_player(inst, i);
-            }
-            db_end_transaction();
-        }
-    }
+    save_instance(inst);
 
     if (GState == &inst->zmachine_state) {
         GState = NULL;
@@ -1793,6 +1827,12 @@ static void inpfn_ingame(Connection *conn, const char *str)
     }
 
     db_end_transaction();
+
+    inst->moves_since_last_save++;
+    if (inst->moves_since_last_save >= MULTIZORK_AUTOSAVE_EVERY_X_MOVES) {
+        save_instance(inst);
+        inst->moves_since_last_save = 0;
+    }
 }
 
 static void inpfn_waiting_for_players(Connection *conn, const char *str)
@@ -2062,11 +2102,20 @@ static Player *reconnect_player(Connection *conn, const char *access_code)
         return NULL;
     }
 
+    // !!! FIXME: crashed games should save off the current state for postmortem debugging, but
+    // !!! FIXME:  shouldn't overwrite the probably-good state that's already in the database, so
+    // !!! FIXME:  the game can continue from that point instead.
     if (inst->crashed) {
         write_to_connection(conn, "Hmm, that's a valid access code, but this game crashed before and can't be rejoined.\n");
         free_instance(inst);
         return NULL;
     }
+
+    // if the server (not the instance) crashed in some way between the last
+    //  save and a later move, we may have transcripts that are no longer
+    //  accurate now, as we'll have rewound time in a sense. Delete any
+    //  recap for this instance that are newer than the latest save time.
+    db_trim_recap(inst);
 
     loginfo("Rehydrated archived instance '%s'", inst->hash);
 
