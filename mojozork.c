@@ -1075,17 +1075,6 @@ static void opcode_random(void)
     WRITEUI16(store, result);
 } // opcode_random
 
-static uint16 toZscii(const uint8 ch)
-{
-    if ((ch >= 'a') && (ch <= 'z'))
-        return (ch - 'a') + 6;
-    else if ((ch >= 'A') && (ch <= 'Z'))
-        return (ch - 'A') + 6;
-    else
-        GState->die("write me");
-    return 0;
-} // toZscii
-
 static void opcode_show_status(void)
 {
     FIXME("redraw the status bar here");
@@ -1093,6 +1082,9 @@ static void opcode_show_status(void)
 
 static void tokenizeUserInput(void)
 {
+    static const char table_a2_v1[] = "0123456789.,!?_#\'\"/\\<-:()";
+    static const char table_a2_v2plus[] = "\n0123456789.,!?_#\'\"/\\-:()";
+    const char *table_a2 = (GState->header.version <= 1) ? table_a2_v1 : table_a2_v2plus;
     const uint8 *input = GState->story + GState->operands[0];
     uint8 *parse = GState->story + GState->operands[1];
     const uint8 parselen = *(parse++);
@@ -1130,18 +1122,41 @@ static void tokenizeUserInput(void)
         if (isSep)
         {
             uint16 encoded[3] = { 0, 0, 0 };
-            uint8 pos = 0;
 
             const uint8 toklen = (uint8) (ptr-strstart);
             if (toklen == 0)
                 break;  // ran out of string.
 
-            encoded[0] |= ((pos < toklen) ? toZscii(strstart[pos]) : 5) << 10; pos++;
-            encoded[0] |= ((pos < toklen) ? toZscii(strstart[pos]) : 5) << 5; pos++;
-            encoded[0] |= ((pos < toklen) ? toZscii(strstart[pos]) : 5) << 0; pos++;
-            encoded[1] |= ((pos < toklen) ? toZscii(strstart[pos]) : 5) << 10; pos++;
-            encoded[1] |= ((pos < toklen) ? toZscii(strstart[pos]) : 5) << 5; pos++;
-            encoded[1] |= ((pos < toklen) ? toZscii(strstart[pos]) : 5) << 0; pos++;
+            uint8 zchars[12];
+            int zchidx = 0;
+            for (uint8 i = 0; i < toklen; i++)
+            {
+                const char ch = strstart[i];
+                if ((ch >= 'a') && (ch <= 'z'))
+                    zchars[zchidx++] = (uint8) ((ch - 'a') + 6);
+                else if ((ch >= 'A') && (ch <= 'Z'))
+                    zchars[zchidx++] = (uint8) ((ch - 'A') + 6);  // in a generic encoder, this would be table a1, but we convert to lowercase (table a0) here.
+                else
+                {
+                    const char *ptr = strchr(table_a2, ch);
+                    if (ptr)
+                    {
+                        zchars[zchidx++] = 3;  // command char to shift to table A2 for just the next char.
+                        zchars[zchidx++] = (uint8) ((((int) (ptr -  table_a2)) + 1) + 6);  // +1 because the first table entry is a different piece of magic.
+                    } // if
+                } // else
+
+                if (zchidx >= (sizeof (zchars) / sizeof (zchars[0])))
+                    break;
+            } // for
+
+            uint8 pos = 0;
+            encoded[0] |= ((pos < zchidx) ? zchars[pos++] : 5) << 10;
+            encoded[0] |= ((pos < zchidx) ? zchars[pos++] : 5) << 5;
+            encoded[0] |= ((pos < zchidx) ? zchars[pos++] : 5) << 0;
+            encoded[1] |= ((pos < zchidx) ? zchars[pos++] : 5) << 10;
+            encoded[1] |= ((pos < zchidx) ? zchars[pos++] : 5) << 5;
+            encoded[1] |= ((pos < zchidx) ? zchars[pos++] : 5) << 0;
 
             FIXME("this can binary search, since we know how many equal-sized records there are.");
             const uint8 *dictptr = dict;
@@ -1165,9 +1180,9 @@ static void tokenizeUserInput(void)
             } // if
             else
             {
-                encoded[2] |= ((pos < toklen) ? toZscii(strstart[pos]) : 5) << 10; pos++;
-                encoded[2] |= ((pos < toklen) ? toZscii(strstart[pos]) : 5) << 5; pos++;
-                encoded[2] |= ((pos < toklen) ? toZscii(strstart[pos]) : 5) << 0; pos++;
+                encoded[2] |= ((pos < zchidx) ? zchars[pos++] : 5) << 10;
+                encoded[2] |= ((pos < zchidx) ? zchars[pos++] : 5) << 5;
+                encoded[2] |= ((pos < zchidx) ? zchars[pos++] : 5) << 0;
                 encoded[2] |= 0x8000;
 
                 FIXME("byteswap 'encoded' and just memcmp here.");
