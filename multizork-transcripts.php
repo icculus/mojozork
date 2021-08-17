@@ -263,7 +263,7 @@ please don't be afraid to throw in a few bucks and see what I do next: <a href="
 <p>Thanks!</p>
 <p><h2>I have more questions!</h2></p>
 <p>I wrote a deeply technical blog post about multizork <a href="https://www.patreon.com/posts/54997062">here</a>.
-But you just hit me up <a href="https://twitter.com/icculus">on Twitter</a>
+But you can just hit me up <a href="https://twitter.com/icculus">on Twitter</a>
 if you have more questions!</p>
 
 EOS;
