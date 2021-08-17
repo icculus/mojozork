@@ -194,7 +194,8 @@ function display_player($hashid, $playerid, $raw)
         if ($raw) {
             print("<pre>\n");
             while ($row = $results->fetchArray()) {
-                print(htmlspecialchars($row['content']));
+                $str = str_replace("\r\n", "\n", $row['content']);
+                print(htmlspecialchars($str));
             }
             if ($crashed != 0) {
                 print("\n\n *** GAME INSTANCE CRASHED HERE ***\n\n");
@@ -216,6 +217,7 @@ function display_player($hashid, $playerid, $raw)
                 if ($fixprompt) {
                     $text = substr($text, 0, strlen($text) - 1);
                 }
+                $text = str_replace("\r\n", "\n", $text);
                 $esctext = str_replace("\n", "<br/>", htmlspecialchars($text));
                 print("<span class='$divclass'>$esctext</span>");
                 if ($fixprompt) {

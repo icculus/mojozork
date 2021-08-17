@@ -855,6 +855,16 @@ static int generate_unique_hash(char *hash)  // `hash` points to up to 8 bytes o
     return 1;  // we're good.
 }
 
+static size_t count_newlines(const char *str)
+{
+    size_t retval = 0;
+    for (size_t i = 0; str[i]; i++) {
+        if (str[i] == '\n') {
+            retval++;
+        }
+    }
+    return retval;
+}
 
 // This queues a string for sending over the connection's socket when possible.
 static void write_to_connection(Connection *conn, const char *str)
@@ -863,19 +873,28 @@ static void write_to_connection(Connection *conn, const char *str)
         return;
     }
 
-    const size_t slen = strlen(str);
+    const size_t needed_space = strlen(str) + count_newlines(str);
     const size_t avail = conn->outputbuf_len - conn->outputbuf_used;
-    if (avail < slen) {
-        void *ptr = realloc(conn->outputbuf, conn->outputbuf_len + slen + 1);
+    if (avail < needed_space) {
+        void *ptr = realloc(conn->outputbuf, conn->outputbuf_len + needed_space + 1);
         if (!ptr) {
             panic("Uhoh, out of memory in write_to_connection");  // !!! FIXME: we could handle this more gracefully.
         }
         conn->outputbuf = (char *) ptr;
-        conn->outputbuf_len += slen;
+        conn->outputbuf_len += needed_space;
     }
-    memcpy(conn->outputbuf + conn->outputbuf_used, str, slen);
-    conn->outputbuf[conn->outputbuf_used + slen] = '\0';  // make sure we're always null-terminated.
-    conn->outputbuf_used += slen;
+
+    // replace "\n" with "\r\n" because telnet is terrible.
+    for (size_t i = 0; str[i]; i++) {
+        const char ch = str[i];
+        if ( (ch == '\n') && ((i == 0) || (str[i-1] != '\r')) ) {
+            conn->outputbuf[conn->outputbuf_used++] = '\r';
+            conn->outputbuf[conn->outputbuf_used++] = '\n';
+        } else {
+            conn->outputbuf[conn->outputbuf_used++] = ch;
+        }
+    }
+    conn->outputbuf[conn->outputbuf_used] = '\0';  // make sure we're always null-terminated.
 }
 
 static void free_instance(Instance *inst);
