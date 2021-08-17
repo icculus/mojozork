@@ -28,7 +28,7 @@
 #define MULTIZORK 1
 #include "mojozork.c"
 
-#define MULTIZORKD_VERSION "0.0.2"
+#define MULTIZORKD_VERSION "0.0.3"
 #define MULTIZORKD_DEFAULT_PORT 23  /* telnet! */
 #define MULTIZORKD_DEFAULT_BACKLOG 64
 #define MULTIZORKD_DEFAULT_EGID 0
@@ -340,13 +340,23 @@ static int db_set_transaction(sqlite3_stmt *stmt, const char *what)
     return 1;
 }
 
+static unsigned int db_transaction_count = 0;
 static int db_begin_transaction(void)
 {
+    db_transaction_count++;
+    if (db_transaction_count > 1) {
+        return 1;
+    }
     return db_set_transaction(GStmtBegin, "begin sqlite3 transaction");
 }
 
 static int db_end_transaction(void)
 {
+    assert(db_transaction_count > 0);
+    db_transaction_count--;
+    if (db_transaction_count > 0) {
+        return 1;
+    }
     return db_set_transaction(GStmtCommit, "commit sqlite3 transaction");
 }
 
