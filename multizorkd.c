@@ -1965,6 +1965,9 @@ static void inpfn_enter_instance_code_to_join(Connection *conn, const char *str)
 
             conn->inputfn = inpfn_player_waiting;
             conn->inputfn(conn, "");  // call this now just to print the guest list.
+
+            write_to_connection(conn, "\n\nWhile we're waiting, let me say I built this for my patrons. If you like\n");
+            write_to_connection(conn, "this sort of thing, please send a dollar to https://patreon.com/icculus !\n\n");
         }
     }
 }
@@ -2000,6 +2003,10 @@ static void inpfn_new_game_or_join(Connection *conn, const char *str)
         write_to_connection(conn, "There's still room for three more people.\n");
         write_to_connection(conn, "Once you type 'go' no more will be admitted.\n");
         write_to_connection(conn, "Type 'quit' to drop this game and anyone connected.\n");
+
+        write_to_connection(conn, "\n\nWhile we're waiting, let me say I built this for my patrons. If you like\n");
+        write_to_connection(conn, "this sort of thing, please send a dollar to https://patreon.com/icculus !\n\n");
+
         conn->inputfn = inpfn_waiting_for_players;
     } else if (strcmp(str, "2") == 0) {  // join an existing game
         write_to_connection(conn, "Okay! The person that started the game has a code for you to enter.\n");
