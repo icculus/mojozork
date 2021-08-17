@@ -1,3 +1,4 @@
+
 # MojoZork
 
 ```
@@ -41,6 +42,15 @@ with new tools. You can find that specification
 
 As usual, Wikipedia offers a wonderful rabbit hole to fall down, too, in
 their [Z-machine article](https://en.wikipedia.org/wiki/Z-machine).
+
+# MultiZork
+
+On top of the MojoZork code, there is a telnet server called `multizorkd` that
+lets several people connect _to the same game_ and play it as a multiplayer
+experience. Each player has their own inventory and can move independent of
+others. This probably only works on Linux/Unix systems, but the single-player
+mojozork program should work on just about anything.
+
 
 Enjoy!
 
