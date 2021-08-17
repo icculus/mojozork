@@ -26,8 +26,8 @@ function print_header($subtitle)
     <meta name="og:image" content="https://multizork.icculus.org/static_files/multizork.png" />
     <meta name="twitter:url" content="https://multizork.icculus.org/" />
     <meta property="og:url" content="https://multizork.icculus.org/" />
-    <meta name="twitter:title" content="multizork" />
-    <meta property="og:title" content="multizork" />
+    <meta name="twitter:title" content="$title - $subtitle" />
+    <meta property="og:title" content="$title - $subtitle" />
     <meta name="twitter:description" content="Making Zork 1 more social!" />
     <meta property="og:description" content="Making Zork 1 more social!" />
     <style>
