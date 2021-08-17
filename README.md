@@ -51,6 +51,9 @@ experience. Each player has their own inventory and can move independent of
 others. This probably only works on Linux/Unix systems, but the single-player
 mojozork program should work on just about anything.
 
+You can play MultiZork right now by pointing a telnet client at
+multizork.icculus.org (or running `nc multizork.icculus.org 23`).
+
 
 Enjoy!
 
