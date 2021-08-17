@@ -262,8 +262,9 @@ please don't be afraid to throw in a few bucks and see what I do next: <a href="
 <p>I also sell a game engine called <a href="https://dragonruby.org/">DragonRuby Game Toolkit</a>, which lets you build 2D games quickly and pleasantly in Ruby. One-time sales and Pro subscriptions help a lot!</p>
 <p>Thanks!</p>
 <p><h2>I have more questions!</h2></p>
-<p>Eventually, there will be a detailed blog post about how all this works, but for now,
-just hit me up <a href="https://twitter.com/icculus">on Twitter</a>.</p>
+<p>I wrote a deeply technical blog post about multizork <a href="https://www.patreon.com/posts/54997062">here</a>.
+But you just hit me up <a href="https://twitter.com/icculus">on Twitter</a>
+if you have more questions!</p>
 
 EOS;
     print($str);
