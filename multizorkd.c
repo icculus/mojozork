@@ -2190,9 +2190,9 @@ static void inpfn_hello_sailor(Connection *conn, const char *str)
             if (strcmp(str, hacker_commands[i]) == 0) {
                 const char *addr = conn->address;
                 loginfo("Socket %d (%s) is probably malicious, blocked and dropped.", conn->sock, addr);
+                conn->blocked = 1;  // drop this connection's further input.
                 if ((strcmp(addr, "127.0.0.1") == 0) || (strcmp(addr, "::ffff:127.0.0.1") == 0) || (strcmp(addr, "::1") == 0)) {
                     loginfo("(not actually blocking localhost.)");
-                    conn->blocked = 1;  // ...but _do_ drop this connection's further input.
                 } else {
                     db_insert_blocked(conn->address);
                 }
@@ -2252,7 +2252,7 @@ static void process_connection_command(Connection *conn)
 
     loginfo("New input from socket %d%s: '%s'", conn->sock, conn->blocked ? " (blocked)" : "", conn->inputbuf);
 
-    if (conn->blocked){
+    if (conn->blocked) {
         return;  // don't process this input further.
     }
 
