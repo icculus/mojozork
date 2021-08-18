@@ -1006,7 +1006,7 @@ static void opcode_print(void)
 static void opcode_print_num(void)
 {
     char buf[32];
-    snprintf(buf, sizeof (buf), "%d", (int) GState->operands[0]);
+    snprintf(buf, sizeof (buf), "%d", (int) ((sint16) GState->operands[0]));
     for (const char *ptr = buf; *ptr; ptr++)
         GState->writechar(*ptr);
 } // opcode_print_num
