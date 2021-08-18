@@ -54,6 +54,10 @@ mojozork program should work on just about anything.
 You can play MultiZork right now by pointing a telnet client at
 multizork.icculus.org (or running `nc multizork.icculus.org 23`).
 
+[A post on my Patreon](https://www.patreon.com/posts/54997062) explains the
+motivations and technical details of multizork. If you like this, please
+consider throwing in a dollar so I can keep doing wild things like this!
+
 
 Enjoy!
 
