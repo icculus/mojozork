@@ -123,6 +123,7 @@ typedef struct Player
     uint16 gvar_lucky;
     uint16 gvar_loadallowed;
     // !!! FIXME: several more, probably.
+    int has_quit;
 } Player;
 
 typedef struct Instance
@@ -208,8 +209,9 @@ static size_t num_connections = 0;
     " gvar_verbose integer unsigned not null," \
     " gvar_superbrief integer unsigned not null," \
     " gvar_lucky integer unsigned not null," \
-    " gvar_loadallowed integer unsigned not null" \
+    " gvar_loadallowed integer unsigned not null," \
     /* !!! FIXME: several more, probably. */ \
+    " has_quit integer not null default 0" \
     ");" \
     " " \
     "create index if not exists players_index on players (hashid);" \
@@ -268,11 +270,11 @@ static size_t num_connections = 0;
     "insert into players (hashid, instance, username, next_logical_pc, next_logical_sp, next_logical_bp," \
     " next_logical_inputbuf, next_logical_inputbuflen, next_operands_1, next_operands_2, againbuf, stack," \
     " object_table_data, property_table_data, touchbits, gvar_location, gvar_coffin_held, gvar_dead, gvar_deaths," \
-    " gvar_lit, gvar_alwayslit, gvar_verbose, gvar_superbrief, gvar_lucky, gvar_loadallowed" \
+    " gvar_lit, gvar_alwayslit, gvar_verbose, gvar_superbrief, gvar_lucky, gvar_loadallowed, has_quit" \
     ") values ($hashid, $instance, $username, $next_logical_pc, $next_logical_sp, $next_logical_bp," \
     " $next_logical_inputbuf, $next_logical_inputbuflen, $next_operands_1, $next_operands_2, $againbuf, $stack," \
     " $object_table_data, $property_table_data, $touchbits, $gvar_location, $gvar_coffin_held, $gvar_dead, $gvar_deaths," \
-    " $gvar_lit, $gvar_alwayslit, $gvar_verbose, $gvar_superbrief, $gvar_lucky, $gvar_loadallowed);"
+    " $gvar_lit, $gvar_alwayslit, $gvar_verbose, $gvar_superbrief, $gvar_lucky, $gvar_loadallowed, $has_quit);"
 
 #define SQL_PLAYER_UPDATE \
     "update players set" \
@@ -282,7 +284,8 @@ static size_t num_connections = 0;
     " object_table_data = $object_table_data, property_table_data = $property_table_data, touchbits = $touchbits," \
     " gvar_location = $gvar_location, gvar_coffin_held = $gvar_coffin_held, gvar_dead = $gvar_dead," \
     " gvar_deaths = $gvar_deaths, gvar_lit = $gvar_lit, gvar_alwayslit = $gvar_alwayslit, gvar_verbose = $gvar_verbose," \
-    " gvar_superbrief = $gvar_superbrief, gvar_lucky = $gvar_lucky, gvar_loadallowed = $gvar_loadallowed where id=$id limit 1;"
+    " gvar_superbrief = $gvar_superbrief, gvar_lucky = $gvar_lucky, gvar_loadallowed = $gvar_loadallowed, has_quit = $has_quit" \
+    " where id=$id limit 1;"
 
 #define SQL_FIND_INSTANCE_BY_PLAYER_HASH \
     "select instance from players where hashid=$hashid limit 1;"
@@ -470,11 +473,11 @@ static sqlite3_int64 db_insert_player(const Instance *inst, const int playernum)
     //"insert into players (hashid, instance, username, next_logical_pc, next_logical_sp, next_logical_bp,"
     //" next_logical_inputbuf, next_logical_inputbuflen, next_operands_1, next_operands_2, againbuf, stack,"
     //" object_table_data, property_table_data, touchbits, gvar_location, gvar_coffin_held, gvar_dead, gvar_deaths,"
-    //" gvar_lit, gvar_alwayslit, gvar_verbose, gvar_superbrief, gvar_lucky, gvar_loadallowed"
+    //" gvar_lit, gvar_alwayslit, gvar_verbose, gvar_superbrief, gvar_lucky, gvar_loadallowed, has_quit"
     //") values ($hashid, $instance, $username, $next_logical_pc, $next_logical_sp, $next_logical_bp,"
     //" $next_logical_inputbuf, $next_logical_inputbuflen, $next_operands_1, $next_operands_2, $againbuf, $stack,"
     //" $object_table_data, $property_table_data, $touchbits, $gvar_location, $gvar_coffin_held, $gvar_dead, $gvar_deaths,"
-    //" $gvar_lit, $gvar_alwayslit, $gvar_verbose, $gvar_superbrief, $gvar_lucky, $gvar_loadallowed);"
+    //" $gvar_lit, $gvar_alwayslit, $gvar_verbose, $gvar_superbrief, $gvar_lucky, $gvar_loadallowed, $has_quit);"
     const Player *player = &inst->players[playernum];
     assert(player->dbid == 0);
     
@@ -505,6 +508,7 @@ static sqlite3_int64 db_insert_player(const Instance *inst, const int playernum)
              (SQLBINDINT(GStmtPlayerInsert, "gvar_superbrief", (int) player->gvar_superbrief) == SQLITE_OK) &&
              (SQLBINDINT(GStmtPlayerInsert, "gvar_lucky", (int) player->gvar_lucky) == SQLITE_OK) &&
              (SQLBINDINT(GStmtPlayerInsert, "gvar_loadallowed", (int) player->gvar_loadallowed) == SQLITE_OK) &&
+             (SQLBINDINT(GStmtPlayerInsert, "has_quit", player->has_quit) == SQLITE_OK) &&
              (sqlite3_step(GStmtPlayerInsert) == SQLITE_DONE) ) ? sqlite3_last_insert_rowid(GDatabase) : 0;
     if (!retval) { db_log_error("insert player"); }
     return retval;
@@ -519,7 +523,8 @@ static int db_update_player(const Instance *inst, const int playernum)
     //" object_table_data = $object_table_data, property_table_data = $property_table_data, touchbits = $touchbits,"
     //" gvar_location = $gvar_location, gvar_coffin_held = $gvar_coffin_held, gvar_dead = $gvar_dead,"
     //" gvar_deaths = $gvar_deaths, gvar_lit = $gvar_lit, gvar_alwayslit = $gvar_alwayslit, gvar_verbose = $gvar_verbose,"
-    //" gvar_superbrief = $gvar_superbrief, gvar_lucky = $gvar_lucky, gvar_loadallowed = $gvar_loadallowed where id=$id limit 1;"
+    //" gvar_superbrief = $gvar_superbrief, gvar_lucky = $gvar_lucky, gvar_loadallowed = $gvar_loadallowed, has_quit = $has_quit"
+    //" where id=$id limit 1;"
     const Player *player = &inst->players[playernum];
     assert(player->dbid != 0);
     const int retval =
@@ -546,6 +551,7 @@ static int db_update_player(const Instance *inst, const int playernum)
              (SQLBINDINT64(GStmtPlayerUpdate, "gvar_superbrief", (int) player->gvar_superbrief) == SQLITE_OK) &&
              (SQLBINDINT64(GStmtPlayerUpdate, "gvar_lucky", (int) player->gvar_lucky) == SQLITE_OK) &&
              (SQLBINDINT64(GStmtPlayerUpdate, "gvar_loadallowed", (int) player->gvar_loadallowed) == SQLITE_OK) &&
+             (SQLBINDINT(GStmtPlayerUpdate, "has_quit", (int) player->has_quit) == SQLITE_OK) &&
              (SQLBINDINT64(GStmtPlayerUpdate, "id", player->dbid) == SQLITE_OK) &&
              (sqlite3_step(GStmtPlayerUpdate) == SQLITE_DONE) ) ? 1 : 0;
     if (!retval) { db_log_error("update player"); }
@@ -633,6 +639,7 @@ static int db_select_instance(Instance *inst, const sqlite3_int64 dbid)
         player->gvar_superbrief = (uint16) SQLCOLUMN(int, GStmtPlayersSelect, "gvar_superbrief");
         player->gvar_lucky = (uint16) SQLCOLUMN(int, GStmtPlayersSelect, "gvar_lucky");
         player->gvar_loadallowed = (uint16) SQLCOLUMN(int, GStmtPlayersSelect, "gvar_loadallowed");
+        player->has_quit = SQLCOLUMN(int, GStmtPlayersSelect, "has_quit");
         num_players++;
     }
 
@@ -1490,6 +1497,7 @@ static int step_instance(Instance *inst, const int playernum, const char *input)
             // Drop this player's connection. Let the others continue to play.
             // If player comes back, they'll just hit the QUIT opcode immediately and get dropped again.
             inst->zmachine_state.quit = 0;  // reset for next player.
+            player->has_quit = 1;  // flag this player as done.
             drop_connection(player->connection);
         }
     } else {
@@ -2213,6 +2221,10 @@ static void inpfn_hello_sailor(Connection *conn, const char *str)
         db_select_recap(player, 5);
         assert(player->connection == conn);
         assert(player->connection->inputfn == inpfn_ingame);
+
+        if (player->has_quit) {  // their game has already ended, drop them.
+            drop_connection(conn);
+        }
     }
 }
 
