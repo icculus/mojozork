@@ -171,11 +171,12 @@ function display_instance($hashid)
 function display_player($hashid, $playerid, $raw)
 {
     global $db, $title, $baseurl;
-    $stmt = $db->prepare('select p.username, i.crashed from players as p inner join instances as i on p.instance=i.id where i.hashid = :hashid and p.id = :playerid limit 1;');
+    $stmt = $db->prepare('select p.username, p.game_over, i.crashed from players as p inner join instances as i on p.instance=i.id where i.hashid = :hashid and p.id = :playerid limit 1;');
     $stmt->bindValue(':hashid', "$hashid");
     $stmt->bindValue(':playerid', "$playerid");
     $results = $stmt->execute();
     if ($row = $results->fetchArray()) {
+        $game_over = $row['game_over'];
         $crashed = $row['crashed'];
         $escuname = htmlspecialchars($row['username']);
         print_header("player $escuname - game '$hashid'");
@@ -223,6 +224,10 @@ function display_player($hashid, $playerid, $raw)
                 if ($fixprompt) {
                     print("<span class='gameoutput'>&gt;</span>");
                 }
+            }
+
+            if ($game_over != 0) {
+                print("<br/><br/><span class='gamecrashed'>*** GAME OVER ***</span><br/><br/>");
             }
 
             if ($crashed != 0) {
