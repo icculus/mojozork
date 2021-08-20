@@ -2193,7 +2193,7 @@ static void inpfn_hello_sailor(Connection *conn, const char *str)
         conn->inputfn = inpfn_enter_name;
     } else {
         // popular bots that troll telnet ports looking to pop a shell will send these as first commands. Dump them.
-        static const char *hacker_commands[] = { "system", "shell", "sh" };
+        static const char *hacker_commands[] = { "system", "shell", "sh", "enable", "admin", "root", "Administrator", "runshellcmd", "linuxshell", "start-shell", "start start-shell", "start-shell bash" };
         for (int i = 0; i < ARRAYSIZE(hacker_commands); i++) {
             if (strcmp(str, hacker_commands[i]) == 0) {
                 const char *addr = conn->address;
