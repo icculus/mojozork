@@ -2310,7 +2310,14 @@ static void recv_from_connection(Connection *conn)
             i++;
             // !!! FIXME: fails on a buffer edge.
             if (i < br) {
-                if (((unsigned char) buf[i]) >= 250) {
+                if (((unsigned char) buf[i]) == 253) {  // DO
+                    i++;
+                    // !!! FIXME: fails on a buffer edge.
+                    if (i < br) {
+                        const unsigned char wont[4] = { 255, 252, (unsigned char) buf[i], 0 };  // WONT do requested action.
+                        write_to_connection(conn, (const char *) wont);
+                    }
+                } else if (((unsigned char) buf[i]) >= 250) {  // ignore everything else.
                     i++;
                 }
             }
