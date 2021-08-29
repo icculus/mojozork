@@ -592,7 +592,11 @@ static void opcode_clear_attr(void)
 {
     const uint16 objid = GState->operands[0];
     const uint16 attrid = GState->operands[1];
-    uint8 *ptr = getObjectPtr(objid);
+    uint8 *ptr = objid ? getObjectPtr(objid) : NULL;
+
+    if (ptr == NULL) {
+        return;  // Zork 1 will trigger this on "go X" where "x" isn't a direction, so ignore it.
+    }
 
     if (GState->header.version <= 3)
     {
@@ -823,7 +827,11 @@ static void opcode_jin(void)
 {
     const uint16 objid = GState->operands[0];
     const uint16 parentid = GState->operands[1];
-    const uint8 *objptr = getObjectPtr(objid);
+    const uint8 *objptr = objid ? getObjectPtr(objid) : NULL;
+
+    if (objptr == NULL) {
+        return;  // Zork 1 will trigger this on "go X" where "x" isn't a direction.
+    }
 
     if (GState->header.version <= 3)
         doBranch((((uint16) objptr[4]) == parentid) ? 1 : 0);

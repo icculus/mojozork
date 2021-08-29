@@ -28,7 +28,7 @@
 #define MULTIZORK 1
 #include "mojozork.c"
 
-#define MULTIZORKD_VERSION "0.0.7"
+#define MULTIZORKD_VERSION "0.0.8"
 #define MULTIZORKD_DEFAULT_PORT 23  /* telnet! */
 #define MULTIZORKD_DEFAULT_BACKLOG 64
 #define MULTIZORKD_DEFAULT_EGID 0
