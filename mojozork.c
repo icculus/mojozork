@@ -1813,10 +1813,13 @@ static void initStory(const char *fname, uint8 *story, const uint32 storylen)
         GState->story = NULL;
     } // if
 
-    free(GState->story_filename);
+    if (GState->story_filename != fname) {
+        free(GState->story_filename);
+        GState->story_filename = fname ? strdup(fname) : NULL;
+    }
+
     GState->story = story;
     GState->story_len = (uintptr) storylen;
-    GState->story_filename = fname ? strdup(fname) : NULL;
     GState->instructions_run = 0;
     GState->pc = 0;
     GState->logical_pc = 0;
