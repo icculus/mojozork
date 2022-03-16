@@ -1829,7 +1829,7 @@ static void inpfn_ingame(Connection *conn, const char *str)
     if (strncasecmp(str, "save", 4) == 0) {
         write_to_connection(conn, "Requests to save the game are ignored, sorry.\n>");
     } else if (strncasecmp(str, "restore", 7) == 0) {
-        write_to_connection(conn, "Requests to restory the game are ignored, sorry.\n>");
+        write_to_connection(conn, "Requests to restore the game are ignored, sorry.\n>");
     } else if (str[0] == '!') {
         if (str[1] == '!') { // broadcast to whole instance
             snprintf(msg, sizeof (msg), "\n*** %s says to the whole dungeon, \"%s\" ***\n\n>", player->username, str + 2);
