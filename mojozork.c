@@ -52,6 +52,8 @@ typedef uint16_t uint16;
 typedef int16_t sint16;
 typedef uint32_t uint32;
 typedef int32_t sint32;
+typedef uint64_t uint64;
+typedef int64_t sint64;
 
 typedef size_t uintptr;
 
@@ -99,6 +101,7 @@ typedef struct ZMachineState
     uint16 *sp;  // stack pointer
     uint16 bp;  // base pointer
     int quit;
+    int step_completed;  // possibly time to break out of the Z-Machine simulation loop.
     uint16 stack[2048];  // !!! FIXME: make this dynamic?
     uint16 operands[8];
     uint8 operand_count;
@@ -1422,6 +1425,7 @@ static void opcode_restore(void)
 static void opcode_quit(void)
 {
     GState->quit = 1;
+    GState->step_completed = 1;  // possibly time to break out of the Z-Machine simulation loop.
 } // opcode_quit
 
 static void opcode_nop(void)
@@ -1690,7 +1694,7 @@ static void inititialOpcodeTableSetup(void)
 
     OPCODE_WRITEME(25, call_2s);
     OPCODE_WRITEME(180, save_ver4);
-    OPCODE_WRITEME(224, call_vs);;
+    OPCODE_WRITEME(224, call_vs);
     OPCODE_WRITEME(228, sread_ver4);
     OPCODE_WRITEME(236, call_vs2);
     OPCODE_WRITEME(237, erase_window);
@@ -1908,7 +1912,7 @@ static void loadStory(const char *fname)
 } // loadStory
 
 
-#ifndef MULTIZORK
+#if !defined(MULTIZORK) && !defined(MOJOZORK_LIBRETRO)
 
 #if defined(__GNUC__) || defined(__clang__)
 static void die(const char *fmt, ...) __attribute__((noreturn));

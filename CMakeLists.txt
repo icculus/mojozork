@@ -2,6 +2,9 @@ project(mojozork)
 cmake_minimum_required(VERSION 3.0.0)
 add_executable(mojozork mojozork.c)
 
+add_library(mojozork_libretro SHARED mojozork-libretro.c)
+set_target_properties(mojozork_libretro PROPERTIES PREFIX "")
+
 if(NOT MSVC)  # the daemon is pretty Unixy.
     add_definitions(-Wall)
     add_executable(multizorkd multizorkd.c)

@@ -58,6 +58,13 @@ multizork.icculus.org (or running `nc multizork.icculus.org 23`).
 motivations and technical details of multizork. If you like this, please
 consider throwing in a dollar so I can keep doing wild things like this!
 
+# libretro core
+
+Ever want to play Z-Machine games under RetroArch? Now you can. The libretro
+core handles all the tapdancing to make text-based games run in a graphical
+window, and can be played with a keyboard (in RetroArch focus mode), or with
+a mouse or game controller on an included virtual keyboard.
+
 
 Enjoy!
 

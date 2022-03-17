@@ -134,7 +134,6 @@ typedef struct Instance
     char hash[8];
     Player players[4];
     int num_players;
-    int step_completed;
     int current_player;   //  the player we're currently running the z-machine for.
     time_t savetime;
     int moves_since_last_save;
@@ -1208,7 +1207,7 @@ static void opcode_read_multizork(void)
     player->next_operands[0] = GState->operands[0];
     player->next_operands[1] = GState->operands[1];
     GState->logical_pc = (uint32) (GState->pc - GState->story);  // next time, run the instructions _right after_ the READ opcode.
-    inst->step_completed = 1;  // time to break out of the Z-Machine simulation loop.
+    GState->step_completed = 1;  // time to break out of the Z-Machine simulation loop.
 }
 
 static void opcode_save_multizork(void)
@@ -1224,13 +1223,6 @@ static void opcode_restore_multizork(void)
 static void opcode_restart_multizork(void)
 {
     GState->die("RESTART opcode executed despite our best efforts. Should not have happened!");
-}
-
-static void opcode_quit_multizork(void)
-{
-    Instance *inst = (Instance *) GState;  // this works because zmachine_state is the first field in Instance.
-    GState->quit = 1;  // note that this should terminate the Z-Machine.
-    inst->step_completed = 1;  // time to break out of the Z-Machine simulation loop.
 }
 
 // this is called by the Z-machine when there's a fatal error. Mojozork just terminates here,
@@ -1293,7 +1285,6 @@ static Instance *create_instance(void)
         GState->opcodes[181].fn = opcode_save_multizork;
         GState->opcodes[182].fn = opcode_restore_multizork;
         GState->opcodes[183].fn = opcode_restart_multizork;
-        GState->opcodes[186].fn = opcode_quit_multizork;
         GState->opcodes[228].fn = opcode_read_multizork;
 
         for (uint8 i = 32; i <= 127; i++)  // 2OP opcodes repeating with different operand forms.
@@ -1398,7 +1389,7 @@ static int step_instance(Instance *inst, const int playernum, const char *input)
     if (player->next_inputbuf) {
         snprintf((char *) player->next_inputbuf, player->next_inputbuflen-1, "%s", input ? input : "");
         // !!! FIXME: this is a hack. Blank out invalid characters.
-        for (char *ptr =  (char *) player->next_inputbuf; *ptr; ptr++) {
+        for (char *ptr = (char *) player->next_inputbuf; *ptr; ptr++) {
             const char ch = *ptr;
             if ((ch >= 'A') && (ch <= 'Z')) {
                 *ptr = 'a' + (ch - 'A');  // lowercase it.
@@ -1427,8 +1418,8 @@ static int step_instance(Instance *inst, const int playernum, const char *input)
 
     // Now run the Z-Machine!
     if (setjmp(inst->jmpbuf) == 0) {
-        inst->step_completed = 0;  // opcode_quit or opcode_read, etc.
-        while (!inst->step_completed) {
+        GState->step_completed = 0;  // opcode_quit or opcode_read, etc.
+        while (!GState->step_completed) {
             runInstruction();
         }
 
