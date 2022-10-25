@@ -1,3 +1,11 @@
+/**
+ * MojoZork; a simple, just-for-fun implementation of Infocom's Z-Machine.
+ *
+ * Please see the file LICENSE.txt in the source's root directory.
+ *
+ *  This file written by Ryan C. Gordon.
+ */
+
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
