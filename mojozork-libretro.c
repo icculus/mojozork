@@ -708,13 +708,13 @@ static void handle_controller_input(void)
     // this is all subject to change.
 
     if (new_press.l1) {  // scroll forward
-        scroll_forward_line();
-    } else if (new_press.l2) {  // scroll back
         scroll_back_line();
-    } else if (new_press.r1) {  // scroll forward
-        scroll_forward_page();
-    } else if (new_press.r2) {  // scroll back
+    } else if (new_press.l2) {  // scroll back
         scroll_back_page();
+    } else if (new_press.r1) {  // scroll forward
+        scroll_forward_line();
+    } else if (new_press.r2) {  // scroll back
+        scroll_forward_page();
     }
 
     // only process input on the virtual keyboard when it's fully exposed, not when disabled or sliding in/out.
