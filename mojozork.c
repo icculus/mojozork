@@ -16,7 +16,8 @@
 #include <stdint.h>
 #include <time.h>
 
-#ifdef _MSC_VER  // oh well.
+// oh well.
+#if defined(_MSC_VER) || defined(__MINGW32__) || defined(__MINGW64__) || defined(_WIN32)
 #define random rand
 #define srandom srand
 #endif
