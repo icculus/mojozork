@@ -642,6 +642,14 @@ static bool process_keyboard_callback(bool down, unsigned keycode, uint32_t ch)
 {
     current_input_device = CURRENTINPUTDEV_KEYBOARD;
     enable_virtual_keyboard(false);
+
+    // RetroArch on several platforms will not return a character code, only a keycode,
+    //  so in that case, we treat the keycode as a value from a US keyboard. It's not
+    //  a perfect solution, but it's all we can do.
+    if ( (ch == 0) && ((keycode >= 32) && (keycode <= 126)) ) {
+        ch = (uint32_t) keycode;  // the keycodes map to US ASCII anyhow.
+    }
+
     return handle_keypress(down, keycode, ch);
 }
 
