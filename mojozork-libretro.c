@@ -22,6 +22,17 @@
 #include "mojozork.c"
 #include "mojozork-libretro-font.h"
 
+#define TEST_TOUCH_WITH_MOUSE 0
+#if TEST_TOUCH_WITH_MOUSE
+static int16_t scale_mouse_to_touch_coords(const int16_t m, const int16_t maxsize)
+{
+    float normalized = ((((float)m) / ((float)maxsize)) * 2.0f) - 1.0f;  // make it -1.0f to 1.0f
+    if (normalized < -1.0f) { normalized = -1.0f; } else if (normalized > 1.0f) { normalized = 1.0f; }  // just in case.
+    return (int16_t) (normalized * 0x7fff);
+}
+#endif
+
+
 // !!! FIXME: almost _all_ of our serialization state bulk is the
 // !!! FIXME:  scrollback buffer (at about 71 bytes per line, 5000 lines of
 // !!! FIXME:  scrollback is ~355 kilobytes). A more efficient serialization
@@ -169,13 +180,18 @@ typedef enum
 {
     CURRENTINPUTDEV_KEYBOARD,
     CURRENTINPUTDEV_MOUSE,
-    CURRENTINPUTDEV_CONTROLLER
+    CURRENTINPUTDEV_CONTROLLER,
+    CURRENTINPUTDEV_TOUCH
 } CurrentInputDevice;
 
 static CurrentInputDevice current_input_device = CURRENTINPUTDEV_KEYBOARD;
 static int32_t mouse_x = -1;
 static int32_t mouse_y = -1;
+static int32_t touch_scrolling = -1;
+static int32_t previous_touch_x = 0;
+static int32_t previous_touch_y = 0;
 static bool mouse_button_down = false;
+static bool touch_pressed = false;
 
 typedef struct
 {
@@ -430,7 +446,7 @@ static void update_frame_buffer(void)
         }
     }
 
-    if (current_input_device == CURRENTINPUTDEV_MOUSE) {
+    if ((current_input_device == CURRENTINPUTDEV_MOUSE) || TEST_TOUCH_WITH_MOUSE) {
         int maxy = FRAMEBUFFER_HEIGHT - mouse_y;
         if (maxy > MOUSE_CURSOR_HEIGHT) { maxy = MOUSE_CURSOR_HEIGHT; }
         int maxx = FRAMEBUFFER_WIDTH - mouse_x;
@@ -565,12 +581,9 @@ static void handle_mouse_wheel(const int16_t x, const int16_t y, const int16_t w
     }
 }
 
-static void update_virtual_key_under_mouse_cursor(void)
+static void update_virtual_key_under_position(const int x, const int y)
 {
-    // keyboard isn't ready to accept input, reset everything.
-    if (current_input_device != CURRENTINPUTDEV_MOUSE) {
-        return;  // don't touch this if we aren't using a mouse.
-    } else if (!virtual_keyboard_enabled || (virtual_keyboard_height != VIRTUAL_KEYBOARD_HEIGHT)) {
+    if (!virtual_keyboard_enabled || (virtual_keyboard_height != VIRTUAL_KEYBOARD_HEIGHT)) {
         virtual_keyboard_key_highlighted = NULL;
         virtual_keyboard_key_pressed = false;
         return;
@@ -583,7 +596,7 @@ static void update_virtual_key_under_mouse_cursor(void)
         for (int keyx = 0; keyx < (sizeof (virtual_keyboard_keys[0]) / sizeof (virtual_keyboard_keys[0][0])); keyx++) {
             const VirtualKeyboardKey *k = &virtual_keyboard_keys[keyy][keyx];
             const int realy = k->y + yoffset;
-            if ( (mouse_x >= k->x) && (mouse_x < (k->x + k->w)) && (mouse_y >= realy) && (mouse_y < (realy + k->h)) ) {
+            if ( (x >= k->x) && (x < (k->x + k->w)) && (y >= realy) && (y < (realy + k->h)) ) {
                 if (virtual_keyboard_key_highlighted != k) {
                     virtual_keyboard_key_highlighted = k;
                     must_update_frame_buffer = true;
@@ -594,6 +607,13 @@ static void update_virtual_key_under_mouse_cursor(void)
     }
     virtual_keyboard_key_highlighted = NULL;
     must_update_frame_buffer = true;
+}
+
+static void update_virtual_key_under_mouse_cursor(void)
+{
+    if (current_input_device == CURRENTINPUTDEV_MOUSE) {  // don't touch this if we aren't using a mouse.
+        update_virtual_key_under_position(mouse_x, mouse_y);
+    }
 }
 
 static void handle_mouse_press(const int16_t x, const int16_t y, const bool pressed)
@@ -617,14 +637,13 @@ static void handle_mouse_press(const int16_t x, const int16_t y, const bool pres
         return;
     }
 
-    const int16_t yoffset = (FRAMEBUFFER_HEIGHT - virtual_keyboard_height);
-
     if (pressed) {
         if (virtual_keyboard_key_highlighted) {
             virtual_keyboard_key_pressed = true;
         }
     } else {
         if (virtual_keyboard_key_highlighted && virtual_keyboard_key_pressed) {
+            const int16_t yoffset = (FRAMEBUFFER_HEIGHT - virtual_keyboard_height);
             const VirtualKeyboardKey *k = virtual_keyboard_key_highlighted;
             const int realy = k->y + yoffset;
             if ( (x >= k->x) && (x < (k->x + k->w)) && (y >= realy) && (y < (realy + k->h)) ) {  // still in the pressed key when letting go? Click.
@@ -634,6 +653,91 @@ static void handle_mouse_press(const int16_t x, const int16_t y, const bool pres
             }
             virtual_keyboard_key_pressed = false;
             update_virtual_key_under_mouse_cursor();
+        }
+    }
+}
+
+static void handle_touch(const int16_t touchx, const int16_t touchy, const bool pressed)
+{
+    // adjust position to screen coordinates...
+    const int32_t x = pressed ? ((int32_t) ((((((float) touchx) / ((float) 0x7FFF)) + 1.0f) / 2.0f) * FRAMEBUFFER_WIDTH)) : previous_touch_x;
+    const int32_t y = pressed ? ((int32_t) ((((((float) touchy) / ((float) 0x7FFF)) + 1.0f) / 2.0f) * FRAMEBUFFER_HEIGHT)) : previous_touch_y;
+
+    previous_touch_x = x;
+    previous_touch_y = y;
+
+    if (touch_pressed && pressed) {  // already touching, maybe treat it as a scrolling operation?
+        if (!virtual_keyboard_enabled || (virtual_keyboard_height != VIRTUAL_KEYBOARD_HEIGHT)) {
+            return;  // ignore scrolling if the keyboard is still sliding in.
+        }
+
+        // only allow scrolling if touch started in game area and not the virtual keyboard.
+        if ((touch_scrolling == -1) && (y < (FRAMEBUFFER_HEIGHT - VIRTUAL_KEYBOARD_HEIGHT))) {
+            touch_scrolling = y;
+        }
+
+        if (touch_scrolling == -1) {
+            return;  // not a scroll operation, we're done here.
+        }
+
+        int32_t difference = touch_scrolling - ((int32_t) y);
+        const int32_t difference_threshold = TERMINAL_CHAR_HEIGHT;
+        if (difference < 0) {  // touch is moving down the screen.
+            while (difference < -difference_threshold) {
+                scroll_back_line();
+                touch_scrolling += difference_threshold;
+                difference += difference_threshold;
+            }
+        } else if (difference > 0) {  // touch is moving up the screen.
+            while (difference > difference_threshold) {
+                scroll_forward_line();
+                touch_scrolling -= difference_threshold;
+                difference -= difference_threshold;
+            }
+        }
+        return;  // we're done here for now.
+    }
+
+    // scrolling is processed, now see if there's activity on the virtual keyboard.
+
+    if (touch_pressed == pressed) {
+        return;  // nothing's changed.
+    }
+
+    touch_pressed = pressed;
+    touch_scrolling = -1;   // reset this because it's either a new touch or a released touch.
+
+    if (pressed) {  // touches claim the current input.
+        current_input_device = CURRENTINPUTDEV_TOUCH;
+        enable_virtual_keyboard(true);
+    } else if (current_input_device != CURRENTINPUTDEV_TOUCH) {
+        return;  // might be a release _after_ something else claimed the current input.
+    }
+
+    // only process input on the virtual keyboard when it's fully exposed, not when disabled or sliding in/out.
+    if (!virtual_keyboard_enabled || (virtual_keyboard_height != VIRTUAL_KEYBOARD_HEIGHT)) {
+        return;
+    }
+
+    if (pressed) {
+        update_virtual_key_under_position(x, y);
+        if (virtual_keyboard_key_highlighted) {
+            //log_cb(RETRO_LOG_INFO, "Touch pressed on '%s'.\n", virtual_keyboard_key_highlighted->sym);
+            virtual_keyboard_key_pressed = true;
+        }
+    } else {
+        if (virtual_keyboard_key_highlighted && virtual_keyboard_key_pressed) {
+            const int16_t yoffset = (FRAMEBUFFER_HEIGHT - virtual_keyboard_height);
+            const VirtualKeyboardKey *k = virtual_keyboard_key_highlighted;
+            const int realy = k->y + yoffset;
+            if ( (x >= k->x) && (x < (k->x + k->w)) && (y >= realy) && (y < (realy + k->h)) ) {  // still in the pressed key when letting go? Click.
+                //log_cb(RETRO_LOG_INFO, "Touch released on '%s'.\n", k->sym);
+                handle_keypress(true, k->key, ((((int) k->key) >= 32) && (((int) k->key) < 127)) ? (char) k->key : 0);
+                handle_keypress(false, k->key, ((((int) k->key) >= 32) && (((int) k->key) < 127)) ? (char) k->key : 0);
+            }
+            virtual_keyboard_key_pressed = false;
+            virtual_keyboard_key_highlighted = NULL;
+            must_update_frame_buffer = true;
         }
     }
 }
@@ -858,6 +962,12 @@ static int update_input(void)  // returns non-zero if the screen changed.
         update_virtual_key_under_mouse_cursor();
     }
 
+    #if TEST_TOUCH_WITH_MOUSE
+    const bool new_pointer_pressed = new_mouse_left;
+    const int16_t new_pointer_x = scale_mouse_to_touch_coords(mouse_x, FRAMEBUFFER_WIDTH);
+    const int16_t new_pointer_y = scale_mouse_to_touch_coords(mouse_y, FRAMEBUFFER_HEIGHT);
+    must_update_frame_buffer = true;
+    #else
     if (new_mouse_left != mouse_button_down) {
         handle_mouse_press(mouse_x, mouse_y, new_mouse_left);
     }
@@ -865,6 +975,13 @@ static int update_input(void)  // returns non-zero if the screen changed.
     if (new_mouse_wheelup || new_mouse_wheeldown) {
         handle_mouse_wheel(mouse_x, mouse_y, new_mouse_wheelup, new_mouse_wheeldown);
     }
+
+    const bool new_pointer_pressed = input_state_cb(0, RETRO_DEVICE_POINTER, 0, RETRO_DEVICE_ID_POINTER_PRESSED) ? true : false;
+    const int16_t new_pointer_x = input_state_cb(0, RETRO_DEVICE_POINTER, 0, RETRO_DEVICE_ID_POINTER_X);
+    const int16_t new_pointer_y = input_state_cb(0, RETRO_DEVICE_POINTER, 0, RETRO_DEVICE_ID_POINTER_Y);
+    #endif
+
+    handle_touch(new_pointer_x, new_pointer_y, new_pointer_pressed);
 
     handle_controller_input();
 
@@ -1168,7 +1285,7 @@ static void explain_controls(void)
     static int already_told = 0;
     if (!already_told) {
         already_told = 1;
-        post_notification("You can switch between a keyboard, controller, or mouse to play.", 5000);
+        post_notification("You can switch between a keyboard, controller, mouse, or touch to play.", 5000);
         post_notification("If you're using a physical keyboard, don't forget to set Focus Mode (press ScrollLock, usually)!", 5000);
     }
 }
@@ -1337,6 +1454,9 @@ bool retro_unserialize(const void *data_, size_t size)
 
     // reset some input and view stuff.
     mouse_button_down = false;  // just in case
+    touch_pressed = false;  // just in case
+    touch_scrolling = -1;  // just in case
+    previous_touch_x = previous_touch_y = 0;  // just in case
     scrollback_read_pos = SCROLLBACK_LINES - TERMINAL_HEIGHT;
     virtual_keyboard_key_highlighted = NULL;
     virtual_keyboard_key_pressed = false;
