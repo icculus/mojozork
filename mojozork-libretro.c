@@ -1140,6 +1140,39 @@ static void restart_game(void)
     }
 }
 
+static void post_notification(const char *msgstr, const unsigned int duration)
+{
+    unsigned int msgver = 0;
+    if (!environ_cb(RETRO_ENVIRONMENT_GET_MESSAGE_INTERFACE_VERSION, &msgver)) {
+        msgver = 0;
+    }
+
+    if (msgver == 0) {
+        struct retro_message msg = { msgstr, duration };
+        environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &msg);
+    } else {
+        struct retro_message_ext msg;
+        msg.msg = msgstr;
+        msg.duration = duration;
+        msg.priority = 99;
+        msg.level = RETRO_LOG_INFO;
+        msg.target = RETRO_MESSAGE_TARGET_OSD;
+        msg.type = RETRO_MESSAGE_TYPE_NOTIFICATION_ALT;
+        msg.progress = -1;
+        environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE_EXT, &msg);
+    }
+}
+
+static void explain_controls(void)
+{
+    static int already_told = 0;
+    if (!already_told) {
+        already_told = 1;
+        post_notification("You can switch between a keyboard, controller, or mouse to play.", 5000);
+        post_notification("If you're using a physical keyboard, don't forget to set Focus Mode (press ScrollLock, usually)!", 5000);
+    }
+}
+
 bool retro_load_game(const struct retro_game_info *info)
 {
     enum retro_pixel_format fmt = RETRO_PIXEL_FORMAT_RGB565;
@@ -1159,6 +1192,9 @@ bool retro_load_game(const struct retro_game_info *info)
         log_cb(RETRO_LOG_INFO, "out of memory!\n");
         return false;
     }
+
+    explain_controls();
+
     memcpy(original_story, info->data, original_story_len);
     restart_game();
     return true;
