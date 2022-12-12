@@ -1,16 +1,16 @@
 # DESCRIPTION: GitLab CI/CD for libRetro (NOT FOR GitLab-proper)
-
+﻿
 ##############################################################################
 ################################# BOILERPLATE ################################
 ##############################################################################
-
+﻿
 # Core definitions
 .core-defs:
   variables:
     GIT_SUBMODULE_STRATEGY: normal
     CORENAME: mojozork
     CORE_ARGS: -DLIBRETRO=ON
-
+﻿
 # Inclusion templates, required for the build to work
 include:
   ################################## DESKTOPS ################################    
@@ -23,9 +23,9 @@ include:
     file: '/windows-cmake-mingw.yml'
     
   # MacOS
-  #- project: 'libretro-infrastructure/ci-templates'
-  #  file: 'osx-cmake-x86.yml'
-
+  - project: 'libretro-infrastructure/ci-templates'
+    file: 'osx-cmake-x86.yml'
+﻿
   ################################## CELLULAR ################################    
   # Android
   #- project: 'libretro-infrastructure/ci-templates'
@@ -35,13 +35,13 @@ include:
   # Nintendo 3DS
   #- project: 'libretro-infrastructure/ci-templates'
   #  file: '/ctr-static-cmake.yml'
-
+﻿
 # Stages for building
 stages:
   - build-prepare
   - build-shared
   - build-static
-
+﻿
 ##############################################################################
 #################################### STAGES ##################################
 ##############################################################################
@@ -52,19 +52,19 @@ libretro-build-linux-x64:
   extends:
     - .libretro-linux-cmake-x86_64
     - .core-defs
-
+﻿
 # Linux 32-bit
 libretro-build-linux-i686:
   extends:
     - .libretro-linux-cmake-x86
     - .core-defs
-
+﻿
 # Windows 64-bit
 libretro-build-windows-x64:
   extends:
     - .libretro-windows-cmake-x86_64
     - .core-defs
-
+﻿
 # Windows 32-bit
 libretro-build-windows-i686:
   extends:
@@ -72,11 +72,11 @@ libretro-build-windows-i686:
     - .core-defs
     
 # MacOS 64-bit
-#libretro-build-osx-x64:
-  #extends:
-    #- .libretro-osx-cmake-x86
-    #- .core-defs
-
+libretro-build-osx-x64:
+  extends:
+    - .libretro-osx-cmake-x86
+    - .core-defs
+﻿
 ################################### CELLULAR #################################
 # Android ARMv7a
 #android-armeabi-v7a:
@@ -108,4 +108,3 @@ libretro-build-windows-i686:
   #extends:
     #- .libretro-ctr-static-cmake-retroarch-master
     #- .core-defs
-
