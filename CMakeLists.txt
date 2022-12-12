@@ -10,7 +10,7 @@ if(MSVC)   # the daemon is pretty Unixy.
 endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Android")
-    set(ANDROID TRUE
+    set(ANDROID TRUE)
 endif()
 
 # Building as part of RetroArch? Turn off everything but the libretro plugin by default.
