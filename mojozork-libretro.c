@@ -22,6 +22,16 @@
 #include "mojozork.c"
 #include "mojozork-libretro-font.h"
 
+// Touch input should work on any platform, but on several desktop platforms
+//  this RETRO_DEVICE_POINTER just gives you mouse input atm, so rather
+//  than risk the confusion, we turn off touch support if you aren't on
+//  Android for now.
+#if defined(__ANDROID__)
+#define IGNORE_TOUCH_INPUT 0
+#else
+#define IGNORE_TOUCH_INPUT 1
+#endif
+
 #define TEST_TOUCH_WITH_MOUSE 0
 #if TEST_TOUCH_WITH_MOUSE
 static int16_t scale_mouse_to_touch_coords(const int16_t m, const int16_t maxsize)
@@ -967,19 +977,26 @@ static int update_input(void)  // returns non-zero if the screen changed.
     const int16_t new_pointer_x = scale_mouse_to_touch_coords(mouse_x, FRAMEBUFFER_WIDTH);
     const int16_t new_pointer_y = scale_mouse_to_touch_coords(mouse_y, FRAMEBUFFER_HEIGHT);
     must_update_frame_buffer = true;
+    #elif IGNORE_TOUCH_INPUT  // !!! FIXME: right now RetroArch doesn't distinguish between touch and mouse on RETRO_DEVICE_POINTER, so just disable touch if this isn't a touchy platform, like mobile.
+    const bool new_pointer_pressed = false;
+    const int16_t new_pointer_x = 0;
+    const int16_t new_pointer_y = 0;
     #else
-    if (new_mouse_left != mouse_button_down) {
-        handle_mouse_press(mouse_x, mouse_y, new_mouse_left);
-    }
-
-    if (new_mouse_wheelup || new_mouse_wheeldown) {
-        handle_mouse_wheel(mouse_x, mouse_y, new_mouse_wheelup, new_mouse_wheeldown);
-    }
-
     const bool new_pointer_pressed = input_state_cb(0, RETRO_DEVICE_POINTER, 0, RETRO_DEVICE_ID_POINTER_PRESSED) ? true : false;
     const int16_t new_pointer_x = input_state_cb(0, RETRO_DEVICE_POINTER, 0, RETRO_DEVICE_ID_POINTER_X);
     const int16_t new_pointer_y = input_state_cb(0, RETRO_DEVICE_POINTER, 0, RETRO_DEVICE_ID_POINTER_Y);
     #endif
+
+    // some devices, might send touch _and_ mouse input at the same time. Ignore the mouse in that case.
+    if (!new_pointer_pressed || !new_mouse_left) {  // both mouse and touch in the same frame? Assume it's mirroring input. Only process mouse if not.
+        if (new_mouse_left != mouse_button_down) {
+            handle_mouse_press(mouse_x, mouse_y, new_mouse_left);
+        }
+
+        if (new_mouse_wheelup || new_mouse_wheeldown) {
+            handle_mouse_wheel(mouse_x, mouse_y, new_mouse_wheelup, new_mouse_wheeldown);
+        }
+    }
 
     handle_touch(new_pointer_x, new_pointer_y, new_pointer_pressed);
 
