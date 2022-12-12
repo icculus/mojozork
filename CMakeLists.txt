@@ -9,6 +9,10 @@ if(MSVC)   # the daemon is pretty Unixy.
     set(MOJOZORK_MULTIZORK_DEFAULT OFF)
 endif()
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Android")
+    set(ANDROID TRUE
+endif()
+
 # Building as part of RetroArch? Turn off everything but the libretro plugin by default.
 if(LIBRETRO)
     set(MOJOZORK_STANDALONE_DEFAULT OFF)
@@ -38,6 +42,9 @@ endif()
 
 if(MOJOZORK_LIBRETRO)
     add_library(mojozork_libretro SHARED mojozork-libretro.c)
+    if(ANDROID)  # Android builds of libretro cores need specific names.
+        set_target_properties(mojozork_libretro PROPERTIES LIBRARY_OUTPUT_NAME mojozork_libretro_android)
+    endif()
     set_target_properties(mojozork_libretro PROPERTIES PREFIX "")
 endif()
 

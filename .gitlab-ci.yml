@@ -28,9 +28,9 @@ include:
 ﻿
   ################################## CELLULAR ################################    
   # Android
-  #- project: 'libretro-infrastructure/ci-templates'
-  #  file: '/android-cmake.yml'
-
+  - project: 'libretro-infrastructure/ci-templates'
+    file: '/android-cmake.yml'
+﻿
   ################################## CONSOLES ################################
   # Nintendo 3DS
   #- project: 'libretro-infrastructure/ci-templates'
@@ -79,29 +79,29 @@ libretro-build-osx-x64:
 ﻿
 ################################### CELLULAR #################################
 # Android ARMv7a
-#android-armeabi-v7a:
-  #extends:
-    #- .libretro-android-cmake-armeabi-v7a
-    #- .core-defs
-
+android-armeabi-v7a:
+  extends:
+    - .libretro-android-cmake-armeabi-v7a
+    - .core-defs
+﻿
 # Android ARMv8a
-#android-arm64-v8a:
-  #extends:
-    #- .libretro-android-cmake-arm64-v8a
-    #- .core-defs
-
+android-arm64-v8a:
+  extends:
+    - .libretro-android-cmake-arm64-v8a
+    - .core-defs
+﻿
 # Android 64-bit x86
-#android-x86_64:
-  #extends:
-    #- .libretro-android-cmake-x86_64
-    #- .core-defs
-
+android-x86_64:
+  extends:
+    - .libretro-android-cmake-x86_64
+    - .core-defs
+﻿
 # Android 32-bit x86
-#android-x86:
-  #extends:
-    #- .libretro-android-cmake-x86
-    #- .core-defs
-
+android-x86:
+  extends:
+    - .libretro-android-cmake-x86
+    - .core-defs
+﻿
 ################################### CONSOLES #################################
 # Nintendo 3DS
 #libretro-build-ctr:
