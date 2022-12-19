@@ -927,7 +927,7 @@ static void handle_controller_input(void)
 }
 
 
-static void writechar_mojozork_libretro(const int ch);
+static void writestr_mojozork_libretro(const char *str, const uintptr slen);
 
 static int update_input(void)  // returns non-zero if the screen changed.
 {
@@ -1005,7 +1005,7 @@ static int update_input(void)  // returns non-zero if the screen changed.
     if (input_ready) {
         char *terminal_buffer = scrollback[SCROLLBACK_LINES - TERMINAL_HEIGHT];
         terminal_buffer[cursor_position] = (char) ' ';
-        writechar_mojozork_libretro('\n');
+        writestr_mojozork_libretro("\n", 1);
 
         // !!! FIXME: this is a hack. Blank out invalid characters.
         for (char *ptr = (char *) next_inputbuf; *ptr; ptr++) {
@@ -1108,57 +1108,54 @@ void retro_run(void)
     video_cb(frame_buffer, FRAMEBUFFER_WIDTH, FRAMEBUFFER_HEIGHT, FRAMEBUFFER_WIDTH * 2);
 }
 
-static void writechar_mojozork_libretro(const int ch)
+static void writestr_mojozork_libretro(const char *str, const uintptr slen)
 {
     char *terminal_buffer = scrollback[SCROLLBACK_LINES - TERMINAL_HEIGHT];
     scrollback_read_pos = SCROLLBACK_LINES - TERMINAL_HEIGHT;  // if we are in scrollback, snap back to the present time.
-
-    if (ch == '\n') {
-        /* !!! FIXME: this is laziness; we should use a ring buffer, but it'd make all of this more complicated. */
-        memmove(scrollback, &scrollback[1], (SCROLLBACK_LINES - 1) * TERMINAL_WIDTH);
-        memset(scrollback[SCROLLBACK_LINES-1], ' ', TERMINAL_WIDTH);
-        cursor_position = TERMINAL_WIDTH * (TERMINAL_HEIGHT-1);
-        terminal_word_start = -1;
-        if (scrollback_count < SCROLLBACK_LINES) {
-            scrollback_count++;
-        }
-    } else {
-        if (ch == ' ') {
+    for (uintptr i = 0; i < slen; i++) {
+        const char ch = str[i];
+        if (ch == '\n') {
+            /* !!! FIXME: this is laziness; we should use a ring buffer, but it'd make all of this more complicated. */
+            memmove(scrollback, &scrollback[1], (SCROLLBACK_LINES - 1) * TERMINAL_WIDTH);
+            memset(scrollback[SCROLLBACK_LINES-1], ' ', TERMINAL_WIDTH);
+            cursor_position = TERMINAL_WIDTH * (TERMINAL_HEIGHT-1);
             terminal_word_start = -1;
-        } else if (terminal_word_start == -1) {
-            terminal_word_start = cursor_position;
-        }
-
-        if ((cursor_position % TERMINAL_WIDTH) == (TERMINAL_WIDTH-1)) {
-            const int wordlen = cursor_position - terminal_word_start;
-            if ((terminal_word_start != -1) && (wordlen < 15)) {  // do a simple wordwrap if possible.
-                char tmpbuf[16];
-                memcpy(tmpbuf, terminal_buffer + terminal_word_start, wordlen);
-                memset(terminal_buffer + terminal_word_start, ' ', wordlen);
-                cursor_position = terminal_word_start;
-                writechar_mojozork_libretro('\n');
-                for (int i = 0; i < wordlen; i++) {
-                    writechar_mojozork_libretro(tmpbuf[i]);
-                }
-            } else {
-                writechar_mojozork_libretro('\n');
-            }
-            if (ch != ' ') {
-                writechar_mojozork_libretro(ch);
+            if (scrollback_count < SCROLLBACK_LINES) {
+                scrollback_count++;
             }
         } else {
-            terminal_buffer[cursor_position++] = ch;
+            if (ch == ' ') {
+                terminal_word_start = -1;
+            } else if (terminal_word_start == -1) {
+                terminal_word_start = cursor_position;
+            }
+
+            if ((cursor_position % TERMINAL_WIDTH) == (TERMINAL_WIDTH-1)) {
+                const int wordlen = cursor_position - terminal_word_start;
+                if ((terminal_word_start != -1) && (wordlen < 15)) {  // do a simple wordwrap if possible.
+                    char tmpbuf[17];
+                    tmpbuf[0] = '\n';
+                    memcpy(tmpbuf + 1, terminal_buffer + terminal_word_start, wordlen);
+                    memset(terminal_buffer + terminal_word_start, ' ', wordlen);
+                    cursor_position = terminal_word_start;
+                    writestr_mojozork_libretro(tmpbuf, wordlen + 1);
+                } else {
+                    writestr_mojozork_libretro("\n", 1);
+                }
+                if (ch != ' ') {
+                    writestr_mojozork_libretro(&ch, 1);
+                }
+            } else {
+                terminal_buffer[cursor_position++] = ch;
+            }
         }
     }
-
     must_update_frame_buffer = true;
 }
 
 static void writestr(const char *str)
 {
-    for (const char *ptr = str; *ptr; ptr++) {
-        writechar_mojozork_libretro(*ptr);
-    }
+    writestr_mojozork_libretro(str, strlen(str));
 }
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -1244,7 +1241,7 @@ static void restart_game(void)
 
     memset(&zmachine_state, '\0', sizeof (zmachine_state));
     GState = &zmachine_state;
-    GState->writechar = writechar_mojozork_libretro;
+    GState->writestr = writestr_mojozork_libretro;
     GState->die = die_mojozork_libretro;
 
     memset(scrollback, ' ', sizeof (scrollback));

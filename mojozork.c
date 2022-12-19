@@ -118,7 +118,7 @@ typedef struct ZMachineState
     // The extended ones, however, only have one form, so we pack that tight.
     Opcode extended_opcodes[30];
 
-    void (*writechar)(const int ch);
+    void (*writestr)(const char *str, const uintptr slen);
     #if defined(__GNUC__) || defined(__clang__)
     void (*die)(const char *fmt, ...) __attribute__((noreturn));
     #else
@@ -879,10 +879,10 @@ static void opcode_get_child(void)
 
 static void opcode_new_line(void)
 {
-    GState->writechar('\n');
+    GState->writestr("\n", 1);
 } // opcode_new_line
 
-static void print_zscii_char(const uint16 val)
+static char decode_zscii_char(const uint16 val)
 {
     char ch = 0;
 
@@ -900,13 +900,14 @@ static void print_zscii_char(const uint16 val)
     else
         ch = '?';  // this is illegal, but we'll be nice.
 
-    if (ch)
-        GState->writechar(ch);
-} // print_zscii_char
+    return ch;
+} // decode_zscii_char
 
-static uintptr print_zscii(const uint8 *_str, const int abbr)
+static uintptr decode_zscii(const uint8 *_str, const int abbr, char *buf, uintptr *_buflen)
 {
     // ZCSII encoding is so nasty.
+    uintptr buflen = *_buflen;
+    uintptr decoded_chars = 0;
     const uint8 *str = _str;
     uint16 code = 0;
     uint8 alphabet = 0;
@@ -936,7 +937,16 @@ static uintptr print_zscii(const uint8 *_str, const int abbr)
                 zscii_collector--;
                 if (!zscii_collector)
                 {
-                    print_zscii_char(zscii_code);
+                    printVal = decode_zscii_char(zscii_code);
+                    if (printVal)
+                    {
+                        decoded_chars++;
+                        if (buflen)
+                        {
+                            *(buf++) = printVal;
+                            buflen--;
+                        } // if
+                    } // if
                     alphabet = useAbbrTable = 0;
                     zscii_code = 0;
                 } // if
@@ -951,7 +961,11 @@ static uintptr print_zscii(const uint8 *_str, const int abbr)
                 const uintptr index = ((32 * (((uintptr) useAbbrTable) - 1)) + (uintptr) ch);
                 const uint8 *ptr = (GState->story + GState->header.abbrtab_addr) + (index * sizeof (uint16));
                 const uint16 abbraddr = READUI16(ptr);
-                print_zscii(GState->story + (abbraddr * sizeof (uint16)), 1);
+                uintptr abbr_decoded_chars = buflen;
+                decode_zscii(GState->story + (abbraddr * sizeof (uint16)), 1, buf, &abbr_decoded_chars);
+                decoded_chars += abbr_decoded_chars;
+                buf += (buflen < abbr_decoded_chars) ? buflen : abbr_decoded_chars;
+                buflen = (buflen < abbr_decoded_chars) ? 0 : (buflen - abbr_decoded_chars);
                 useAbbrTable = 0;
                 alphabet = 0;  // FIXME: no shift locking in ver3+, but ver1 needs it.
                 continue;
@@ -998,7 +1012,14 @@ static uintptr print_zscii(const uint8 *_str, const int abbr)
             } // switch
 
             if (printVal)
-                GState->writechar(printVal);
+            {
+                decoded_chars++;
+                if (buflen)
+                {
+                    *(buf++) = printVal;
+                    buflen--;
+                } // if
+            } // if
 
             if (alphabet && !newshift)
                 alphabet = 0;
@@ -1007,8 +1028,32 @@ static uintptr print_zscii(const uint8 *_str, const int abbr)
         // there is no NULL terminator, you look for a word with the top bit set.
     } while ((code & (1<<15)) == 0);
 
+    *_buflen = decoded_chars;
     return str - _str;
+} // decode_zscii
+
+static uintptr print_zscii(const uint8 *_str, const int abbr)
+{
+    char buf[512];
+    char *ptr = buf;
+    uintptr decoded_chars = sizeof (buf);
+    uintptr retval = decode_zscii(_str, abbr, ptr, &decoded_chars);
+    if (decoded_chars > sizeof (buf))
+    {
+        ptr = (char *) malloc(decoded_chars);
+        if (!ptr)
+            GState->die("Out of memory!");
+        retval = decode_zscii(_str, abbr, ptr, &decoded_chars);
+    } // if
+
+    GState->writestr(ptr, decoded_chars);
+
+    if (ptr != buf)
+        free(ptr);
+
+    return retval;
 } // print_zscii
+
 
 static void opcode_print(void)
 {
@@ -1018,20 +1063,21 @@ static void opcode_print(void)
 static void opcode_print_num(void)
 {
     char buf[32];
-    snprintf(buf, sizeof (buf), "%d", (int) ((sint16) GState->operands[0]));
-    for (const char *ptr = buf; *ptr; ptr++)
-        GState->writechar(*ptr);
+    const int slen = (int) snprintf(buf, sizeof (buf), "%d", (int) ((sint16) GState->operands[0]));
+    GState->writestr(buf, slen);
 } // opcode_print_num
 
 static void opcode_print_char(void)
 {
-    print_zscii_char(GState->operands[0]);
+    const char ch = decode_zscii_char(GState->operands[0]);
+    if (ch)
+        GState->writestr(&ch, 1);
 } // opcode_print_char
 
 static void opcode_print_ret(void)
 {
     GState->pc += print_zscii(GState->pc, 0);
-    GState->writechar('\n');
+    GState->writestr("\n", 1);
     doReturn(1);
 } // opcode_print_ret
 
@@ -1938,10 +1984,10 @@ static void die(const char *fmt, ...)
     exit(1);
 } // die
 
-static void putchar_wrapper(const int ch)
+static void writestr_stdio(const char *str, const uintptr slen)
 {
-    putchar(ch);
-    if (ch == '\n')
+    fwrite(str, 1, (size_t) slen, stdout);
+    if (memchr(str, '\n', slen) != NULL)
         fflush(stdout);
 }
 
@@ -1953,7 +1999,7 @@ int main(int argc, char **argv)
     GState = &zmachine_state;
     GState->startup_script = (argc >= 3) ? argv[2] : NULL;
     GState->die = die;
-    GState->writechar = putchar_wrapper;
+    GState->writestr = writestr_stdio;
 
     srandom((unsigned long) time(NULL));
 

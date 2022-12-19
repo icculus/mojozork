@@ -871,10 +871,10 @@ static int generate_unique_hash(char *hash)  // `hash` points to up to 8 bytes o
     return 1;  // we're good.
 }
 
-static size_t count_newlines(const char *str)
+static size_t count_newlines(const char *str, const uintptr slen)
 {
     size_t retval = 0;
-    for (size_t i = 0; str[i]; i++) {
+    for (size_t i = 0; i < slen; i++) {
         if (str[i] == '\n') {
             retval++;
         }
@@ -883,13 +883,13 @@ static size_t count_newlines(const char *str)
 }
 
 // This queues a string for sending over the connection's socket when possible.
-static void write_to_connection(Connection *conn, const char *str)
+static void write_to_connection_slen(Connection *conn, const char *str, const uintptr slen)
 {
     if (!conn || (conn->state != CONNSTATE_READY)) {
         return;
     }
 
-    const size_t needed_space = strlen(str) + count_newlines(str);
+    const size_t needed_space = slen + count_newlines(str, slen);
     const size_t avail = conn->outputbuf_len - conn->outputbuf_used;
     if (avail < needed_space) {
         void *ptr = realloc(conn->outputbuf, conn->outputbuf_len + needed_space + 1);
@@ -901,7 +901,7 @@ static void write_to_connection(Connection *conn, const char *str)
     }
 
     // replace "\n" with "\r\n" because telnet is terrible.
-    for (size_t i = 0; str[i]; i++) {
+    for (size_t i = 0; i < slen; i++) {
         const char ch = str[i];
         if ( (ch == '\n') && ((i == 0) || (str[i-1] != '\r')) ) {
             conn->outputbuf[conn->outputbuf_used++] = '\r';
@@ -911,6 +911,11 @@ static void write_to_connection(Connection *conn, const char *str)
         }
     }
     conn->outputbuf[conn->outputbuf_used] = '\0';  // make sure we're always null-terminated.
+}
+
+static void write_to_connection(Connection *conn, const char *str)
+{
+    write_to_connection_slen(conn, str, strlen(str));
 }
 
 static void free_instance(Instance *inst);
@@ -1116,11 +1121,10 @@ static uint8 *getObjectProperty(const uint16 _objid, const uint32 propid, uint8 
     return NULL;
 }
 
-static void writechar_multizork(const int ch)
+static void writestr_multizork(const char *str, const uintptr slen)
 {
     Instance *inst = (Instance *) GState;  // this works because zmachine_state is the first field in Instance.
-    char str[2] = { (char) ch, '\0' };
-    write_to_connection(get_current_player(inst)->connection, str);
+    write_to_connection_slen(get_current_player(inst)->connection, str, slen);
 }
 
 // see comments on getObjectProperty
@@ -1294,7 +1298,7 @@ static Instance *create_instance(void)
         for (uint8 i = 192; i <= 223; i++)  // 2OP opcodes repeating with VAR operand forms.
             GState->opcodes[i] = GState->opcodes[i % 32];
 
-        GState->writechar = writechar_multizork;
+        GState->writestr = writestr_multizork;
         GState->die = die_multizork;
         GState = NULL;
     }
