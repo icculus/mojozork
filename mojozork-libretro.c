@@ -1397,9 +1397,12 @@ bool retro_load_game_special(unsigned type, const struct retro_game_info *info, 
 
 // !!! FIXME: random seeds aren't serialized, so future game state can diverge in small (or not so small) ways when restoring. Maybe that's okay...?
 
+#define MOJOZORK_SERIALIZATION_MAGIC 0x6B5A6A4D  // littleendian number is "MjZk" in ASCII.
+#define MOJOZORK_SERIALIZATION_CURRENT_VERSION 1
+
 /* MAKE SURE THESE STAY IN ORDER: 64-bit first, 32 second, then 16, then BUFFER.
    This will make sure memory accesses stay aligned. */
-#define MOJOZORK_SERIALIZE_STATE() { \
+#define MOJOZORK_SERIALIZE_STATE(version) { \
     MOJOZORK_SERIALIZE_UINT64(runtime_usecs) \
     MOJOZORK_SERIALIZE_UINT32(GState->instructions_run) \
     MOJOZORK_SERIALIZE_UINT32(GState->header.staticmem_addr) \
@@ -1408,6 +1411,7 @@ bool retro_load_game_special(unsigned type, const struct retro_game_info *info, 
     MOJOZORK_SERIALIZE_UINT32(scrollback_count) \
     MOJOZORK_SERIALIZE_SINT32(cursor_position) \
     MOJOZORK_SERIALIZE_SINT32(terminal_word_start) \
+    if (version >= 1) { MOJOZORK_SERIALIZE_SINT32(GState->status_bar_enabled) } \
     MOJOZORK_SERIALIZE_UINT16(GState->header.staticmem_addr) \
     MOJOZORK_SERIALIZE_UINT16(logical_sp) \
     MOJOZORK_SERIALIZE_UINT16(GState->bp) \
@@ -1436,7 +1440,9 @@ size_t retro_serialize_size(void)
     #define MOJOZORK_SERIALIZE_UINT64(var) retval += sizeof (uint64);
     #define MOJOZORK_SERIALIZE_BUFFER(var, siz) retval += siz;
 
-    MOJOZORK_SERIALIZE_STATE();
+    MOJOZORK_SERIALIZE_UINT32(MOJOZORK_SERIALIZATION_MAGIC);
+    MOJOZORK_SERIALIZE_UINT32(MOJOZORK_SERIALIZATION_CURRENT_VERSION);
+    MOJOZORK_SERIALIZE_STATE(MOJOZORK_SERIALIZATION_CURRENT_VERSION);
 
     #undef MOJOZORK_SERIALIZE_UINT16
     #undef MOJOZORK_SERIALIZE_UINT32
@@ -1465,7 +1471,9 @@ bool retro_serialize(void *data_, size_t size)
     #define MOJOZORK_SERIALIZE_UINT64(var) *((uint64 *) data) = (uint64) (var); data += sizeof (uint64);
     #define MOJOZORK_SERIALIZE_BUFFER(var, siz) memcpy(data, var, (siz)); data += (siz);
 
-    MOJOZORK_SERIALIZE_STATE();
+    MOJOZORK_SERIALIZE_UINT32(MOJOZORK_SERIALIZATION_MAGIC);
+    MOJOZORK_SERIALIZE_UINT32(MOJOZORK_SERIALIZATION_CURRENT_VERSION);
+    MOJOZORK_SERIALIZE_STATE(MOJOZORK_SERIALIZATION_CURRENT_VERSION);
 
     #undef MOJOZORK_SERIALIZE_UINT16
     #undef MOJOZORK_SERIALIZE_UINT32
@@ -1481,7 +1489,7 @@ bool retro_unserialize(const void *data_, size_t size)
     const uint8 *data = (const uint8 *) data_;
     uint16 logical_sp, logical_next_inputbuf;
 
-    assert(size >= retro_serialize_size());
+    assert(size <= retro_serialize_size());
 
     // !!! FIXME: byteswap
     #define MOJOZORK_SERIALIZE_UINT16(var) var = *((uint16 *) data); data += sizeof (uint16);
@@ -1490,7 +1498,19 @@ bool retro_unserialize(const void *data_, size_t size)
     #define MOJOZORK_SERIALIZE_UINT64(var) var = *((uint64 *) data); data += sizeof (uint64);
     #define MOJOZORK_SERIALIZE_BUFFER(var, siz) memcpy(var, data, (siz)); data += (siz);
 
-    MOJOZORK_SERIALIZE_STATE();
+    uint32 magic = 0;
+    uint32 version = 0;
+    MOJOZORK_SERIALIZE_UINT32(magic);
+    if (magic == MOJOZORK_SERIALIZATION_MAGIC) {
+        MOJOZORK_SERIALIZE_UINT32(version);
+    } else {
+        data -= sizeof (uint32);  // first builds had no magic or version (rookie mistake!). We'll call that version 0, and move the serialization pointer back to the start.
+    }
+
+    // in the slim chance you end up with version 0 that had a timestamp that matched magic, everything will break, that's unfortunate.
+    // in the better chance you feed this data that isn't a serialization stream at all, you are also screwed. But let's hope the frontend mitigates that.
+
+    MOJOZORK_SERIALIZE_STATE(version);
 
     #undef MOJOZORK_SERIALIZE_UINT16
     #undef MOJOZORK_SERIALIZE_UINT32
@@ -1498,8 +1518,12 @@ bool retro_unserialize(const void *data_, size_t size)
     #undef MOJOZORK_SERIALIZE_UINT64
     #undef MOJOZORK_SERIALIZE_BUFFER
 
+    GState->status_bar = status_bar;
+    GState->status_bar_len = sizeof (status_bar);
     GState->sp = GState->stack + logical_sp;
     next_inputbuf = logical_next_inputbuf ? (GState->story + logical_next_inputbuf) : NULL;
+
+    updateStatusBar();
 
     // reset some input and view stuff.
     mouse_button_down = false;  // just in case
