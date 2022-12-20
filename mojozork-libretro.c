@@ -117,6 +117,7 @@ static bool virtual_keyboard_enabled = false;
 static uint16_t virtual_keyboard_image[VIRTUAL_KEYBOARD_HEIGHT * FRAMEBUFFER_WIDTH];
 static const VirtualKeyboardKey *virtual_keyboard_key_highlighted = NULL;
 static bool virtual_keyboard_key_pressed = false;
+static char status_bar[TERMINAL_WIDTH + 1];
 
 static const VirtualKeyboardKey virtual_keyboard_keys[5][11] = {
     {
@@ -407,13 +408,17 @@ static void update_frame_buffer(void)
 
     memset(frame_buffer, '\0', sizeof (frame_buffer));
 
+    if (GState->status_bar_enabled) {
+        orig_dst += FRAMEBUFFER_WIDTH * TERMINAL_CHAR_HEIGHT;
+    }
+
     if (virtual_keyboard_height > 0) {
         dst -= FRAMEBUFFER_WIDTH * (virtual_keyboard_height - 1);  // minus one because dst was already set to write at the start of the last row.
         memcpy(dst, virtual_keyboard_image, FRAMEBUFFER_WIDTH * virtual_keyboard_height * sizeof (uint16_t));
     }
 
-    for (int y = TERMINAL_HEIGHT - 1; y >= 0; y--) {
-        for (int fy = TERMINAL_CHAR_HEIGHT - 1; (fy >= 0) && (dst >= orig_dst); fy--) {
+    for (int y = TERMINAL_HEIGHT - 1; y >= 1; y--) {
+        for (int fy = TERMINAL_CHAR_HEIGHT - 1; (fy >= 0) && (dst > orig_dst); fy--) {
             uint16_t *next_dst = dst - FRAMEBUFFER_WIDTH;  // draw rows bottom to top.
             for (int x = 0; x < TERMINAL_WIDTH; x++) {
                 const uint32_t ch = (uint32_t) (unsigned char) term_src[x];
@@ -425,6 +430,23 @@ static void update_frame_buffer(void)
             dst = next_dst;
         }
         term_src -= TERMINAL_WIDTH;  // draw rows bottom to top.
+    }
+
+    // draw the status bar.
+    if (GState->status_bar_enabled) {
+        dst = orig_dst;
+        orig_dst -= FRAMEBUFFER_WIDTH * TERMINAL_CHAR_HEIGHT;
+        for (int fy = TERMINAL_CHAR_HEIGHT - 1; (fy >= 0) && (dst > orig_dst); fy--) {
+            uint16_t *next_dst = dst - FRAMEBUFFER_WIDTH;  // draw rows bottom to top.
+            for (int x = 0; x < TERMINAL_WIDTH; x++) {
+                const uint32_t ch = (uint32_t) (unsigned char) GState->status_bar[x];
+                const uint8_t *glyph = &libretrofont_data[(ch * TERMINAL_CHAR_WIDTH) + (LIBRETROFONT_WIDTH * fy)];
+                for (int fx = 0; fx < TERMINAL_CHAR_WIDTH; fx++) {
+                    *(dst++) = glyph_color[glyph[fx] ? 0 : 1];
+                }
+            }
+            dst = next_dst;
+        }
     }
 
     // fully displayed? add highlighting.
@@ -1219,6 +1241,8 @@ static void opcode_read_mojozork_libretro(void)
     if (parselen < 4)
         GState->die("parse buffer is too small for reading");  // happens on buffer overflow.
 
+    updateStatusBar();
+
     next_inputbuf = input;
     next_inputbuflen = inputlen;
     next_operands[0] = GState->operands[0];
@@ -1267,6 +1291,13 @@ static void restart_game(void)
         GState->opcodes[182].fn = opcode_restore_mojozork_libretro;
         GState->opcodes[183].fn = opcode_restart_mojozork_libretro;
         GState->opcodes[228].fn = opcode_read_mojozork_libretro;
+
+        memset(status_bar, ' ', sizeof (status_bar));
+        GState->status_bar_enabled = 1;
+        GState->status_bar = status_bar;
+        GState->status_bar_len = sizeof (status_bar);
+        GState->story[1] &= ~(1<<4);  // so the game knows that a status bar is available
+
         step_zmachine();  // run until we get to the first input prompt.
     }
 }

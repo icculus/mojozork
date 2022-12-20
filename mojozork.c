@@ -109,6 +109,9 @@ typedef struct ZMachineState
     char alphabet_table[78];
     const char *startup_script;
     char *story_filename;
+    int status_bar_enabled;
+    char *status_bar;
+    uintptr status_bar_len;
 
     // this is kinda wasteful (we could pack the 89 opcodes in their various forms
     //  into separate arrays and strip off the metadata bits) but it simplifies
@@ -316,6 +319,13 @@ static void opcode_pop(void)
 {
     varAddress(0, 0);   // this causes a pop.
 } // opcode_pop
+
+static void updateStatusBar(void);
+
+static void opcode_show_status(void)
+{
+    updateStatusBar();
+} // opcode_show_status
 
 static void opcode_add(void)
 {
@@ -721,6 +731,24 @@ static uint8 *getObjectProperty(const uint16 objid, const uint32 propid, uint8 *
     return NULL;
 } // getObjectProperty
 #endif
+
+// this returns the zscii string for the object!
+static const uint8 *getObjectShortName(const uint16 objid)
+{
+    const uint8 *ptr = getObjectPtr(objid);
+    if (GState->header.version <= 3)
+    {
+        ptr += 7;  // skip to properties address field.
+        const uint16 addr = READUI16(ptr);
+        return GState->story + addr + 1;  // +1 to skip z-char count.
+    } // if
+    else
+    {
+        GState->die("write me");
+    } // else
+
+    return NULL;
+} // getObjectShortName
 
 static void opcode_put_prop(void)
 {
@@ -1133,10 +1161,6 @@ static void opcode_random(void)
     WRITEUI16(store, result);
 } // opcode_random
 
-static void opcode_show_status(void)
-{
-    FIXME("redraw the status bar here");
-} // opcode_show_status
 
 static void tokenizeUserInput(void)
 {
@@ -1305,6 +1329,8 @@ static void opcode_read(void)
     if (parselen < 4)
         GState->die("parse buffer is too small for reading");  // happens on buffer overflow.
 
+    updateStatusBar();
+
     if (GState->startup_script != NULL)
     {
         snprintf((char *) input, inputlen-1, "#script %s\n", GState->startup_script);
@@ -1315,7 +1341,6 @@ static void opcode_read(void)
 
     else if (script == NULL)
     {
-        opcode_show_status();
         FIXME("fgets isn't really the right solution here.");
         if (!fgets((char *) input, inputlen, stdin))
             GState->die("EOF or error on stdin during read");
@@ -1514,6 +1539,61 @@ static uint8 parseVarOperands(uint16 *operands)
 
     return i;
 } // parseVarOperands
+
+static void calculateStatusBar(char *buf, size_t buflen)
+{
+    // if not a score game, then it's a time game.
+    const int score_game = (GState->header.version < 3) || ((GState->header.flags1 & (1<<1)) == 0);
+    const uint8 *addr = varAddress(0x10, 0);
+    const uint16 objid = READUI16(addr);
+    const uint16 scoreval = READUI16(addr);
+    const uint16 movesval = READUI16(addr);
+    const uint8 *objzstr = getObjectShortName(objid);
+    char objstr[64];
+
+    memset(buf, ' ', buflen - 1);
+    buf[buflen - 1] = '\0';
+
+    objstr[0] = '\0';
+    if (objzstr)
+    {
+        uintptr decoded_chars = sizeof (objstr) - 1;
+        decode_zscii(objzstr, 0, objstr, &decoded_chars);
+        objstr[(decoded_chars < sizeof (objstr)) ? decoded_chars : sizeof (objstr) - 1] = '\0';
+    } // if
+
+    const int scoremovelen = score_game ? (3 + 4 + 20) : (2 + 2 + 16);
+    if (buflen < scoremovelen)
+        return;  // oh well.
+
+    const int maxobjlen = (buflen > scoremovelen) ? (buflen - scoremovelen) : 0;
+    if (strlen(objstr) > maxobjlen)
+    {
+        if (maxobjlen < 3)
+            objstr[0] = '\0';
+        else
+        {
+            objstr[maxobjlen] = '\0';
+            objstr[maxobjlen - 1] = '.';
+            objstr[maxobjlen - 2] = '.';
+            objstr[maxobjlen - 3] = '.';
+        } // else
+    } // if
+
+    snprintf(buf, buflen, "%s", objstr);
+    buf[strlen(buf)] = ' ';
+
+    if (score_game)
+        snprintf((buf + buflen) - scoremovelen, scoremovelen, "     Score:%-3d  Moves:%-4u", (int) scoreval, (unsigned int) movesval);
+    else
+        snprintf((buf + buflen) - scoremovelen, scoremovelen, "     Time: %2u:%02u %s", (unsigned int) (scoreval % 12) + 1, (unsigned int) movesval, (scoreval < 12) ? "am" : "pm");
+} // calculateStatusBar
+
+static void updateStatusBar(void)
+{
+    if (GState->status_bar && GState->status_bar_len && GState->status_bar_enabled)
+        calculateStatusBar(GState->status_bar, GState->status_bar_len);
+} // updateStatusBar
 
 
 static void runInstruction(void)
@@ -1724,6 +1804,14 @@ static void inititialOpcodeTableSetup(void)
     if (GState->header.version < 3)  // most early Infocom games are version 3.
         return;  // we're done.
 
+    // since the base interpreter doesn't show a status bar, as it's just
+    //  stdout, other targets that _can_ will want to provide a buffer for the
+    //  status bar 1 char larger than they need (for a null-terminator).
+    //  and also do `GState->story[1] &= ~(1<<4);` so the game knows that a
+    //  status bar is available. opcode_read and opcode_show_status in this
+    //  implementation will fill in the buffer if available, and the target
+    //  can display it as appropriate.
+
     OPCODE(188, show_status);
     OPCODE(189, verify);
     OPCODE_WRITEME(234, split_window);
@@ -1736,7 +1824,7 @@ static void inititialOpcodeTableSetup(void)
         return;  // we're done.
 
     // show_status is illegal in ver4+, but a build of Wishbringer
-    //  accidentally calls it, so treat it as NOP instead.
+    //  accidentally calls it, so always treat it as NOP instead.
     opcodes[188].fn = opcode_nop;
 
     OPCODE_WRITEME(25, call_2s);
@@ -1752,10 +1840,6 @@ static void inititialOpcodeTableSetup(void)
     OPCODE_WRITEME(242, buffer_mode);
     OPCODE_WRITEME(246, read_char);
     OPCODE_WRITEME(247, scan_table);
-
-    // this is the "show_status" opcode in ver3; illegal in ver4+.
-    opcodes[188].name = NULL;
-    opcodes[188].fn = NULL;
 
     if (GState->header.version < 5)
         return;  // we're done.
