@@ -1298,6 +1298,10 @@ static void restart_game(void)
         GState->status_bar_len = sizeof (status_bar);
         GState->story[1] &= ~(1<<4);  // so the game knows that a status bar is available
 
+        // make sure the header matches our tweaks.
+        const uint8 *ptr = GState->story;
+        GState->header.version = READUI8(ptr);
+        GState->header.flags1 = READUI8(ptr);
         step_zmachine();  // run until we get to the first input prompt.
     }
 }
