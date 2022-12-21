@@ -118,6 +118,8 @@ static uint16_t virtual_keyboard_image[VIRTUAL_KEYBOARD_HEIGHT * FRAMEBUFFER_WID
 static const VirtualKeyboardKey *virtual_keyboard_key_highlighted = NULL;
 static bool virtual_keyboard_key_pressed = false;
 static char status_bar[TERMINAL_WIDTH + 1];
+static char upper_window[TERMINAL_HEIGHT * TERMINAL_WIDTH];
+static int32_t upper_window_cursor_position = 0;
 
 static const VirtualKeyboardKey virtual_keyboard_keys[5][11] = {
     {
@@ -412,11 +414,14 @@ static void update_frame_buffer(void)
         orig_dst += FRAMEBUFFER_WIDTH * TERMINAL_CHAR_HEIGHT;
     }
 
+    orig_dst += FRAMEBUFFER_WIDTH * TERMINAL_CHAR_HEIGHT * GState->upper_window_line_count;
+
     if (virtual_keyboard_height > 0) {
         dst -= FRAMEBUFFER_WIDTH * (virtual_keyboard_height - 1);  // minus one because dst was already set to write at the start of the last row.
         memcpy(dst, virtual_keyboard_image, FRAMEBUFFER_WIDTH * virtual_keyboard_height * sizeof (uint16_t));
     }
 
+    // !!! FIXME: move this to a subroutine
     for (int y = TERMINAL_HEIGHT - 1; y >= 1; y--) {
         for (int fy = TERMINAL_CHAR_HEIGHT - 1; (fy >= 0) && (dst > orig_dst); fy--) {
             uint16_t *next_dst = dst - FRAMEBUFFER_WIDTH;  // draw rows bottom to top.
@@ -429,7 +434,32 @@ static void update_frame_buffer(void)
             }
             dst = next_dst;
         }
+
         term_src -= TERMINAL_WIDTH;  // draw rows bottom to top.
+    }
+
+    // !!! FIXME: move this to a subroutine
+    if (GState->upper_window_line_count) {
+        const char *term_src = upper_window + (TERMINAL_WIDTH * (GState->upper_window_line_count - 1));
+        orig_dst = frame_buffer + ((VIDEO_Y_OFFSET * FRAMEBUFFER_WIDTH) + VIDEO_X_OFFSET);
+        if (GState->status_bar_enabled) {
+            orig_dst += FRAMEBUFFER_WIDTH * TERMINAL_CHAR_HEIGHT;
+        }
+        for (int y = TERMINAL_HEIGHT - 1; y >= 1; y--) {
+            for (int fy = TERMINAL_CHAR_HEIGHT - 1; (fy >= 0) && (dst > orig_dst); fy--) {
+                uint16_t *next_dst = dst - FRAMEBUFFER_WIDTH;  // draw rows bottom to top.
+                for (int x = 0; x < TERMINAL_WIDTH; x++) {
+                    const uint32_t ch = (uint32_t) (unsigned char) term_src[x];
+                    const uint8_t *glyph = &libretrofont_data[(ch * TERMINAL_CHAR_WIDTH) + (LIBRETROFONT_WIDTH * fy)];
+                    for (int fx = 0; fx < TERMINAL_CHAR_WIDTH; fx++) {
+                        *(dst++) = glyph_color[glyph[fx]];
+                    }
+                }
+                dst = next_dst;
+            }
+
+            term_src -= TERMINAL_WIDTH;  // draw rows bottom to top.
+        }
     }
 
     // draw the status bar.
@@ -519,7 +549,11 @@ static bool input_ready = 0;
 
 static void scroll_back_page(void)
 {
-    scrollback_read_pos -= TERMINAL_HEIGHT - (virtual_keyboard_height / TERMINAL_CHAR_HEIGHT);
+    int32_t offset = TERMINAL_HEIGHT - GState->upper_window_line_count;
+    if (GState->status_bar_enabled) {
+        offset--;
+    }
+    scrollback_read_pos -= offset - (virtual_keyboard_height / TERMINAL_CHAR_HEIGHT);
     if (scrollback_read_pos < (SCROLLBACK_LINES - scrollback_count)) {
         scrollback_read_pos = SCROLLBACK_LINES - scrollback_count;
     }
@@ -529,7 +563,11 @@ static void scroll_back_page(void)
 static void scroll_forward_page(void)
 {
     const int maxpos = SCROLLBACK_LINES - TERMINAL_HEIGHT;
-    scrollback_read_pos += TERMINAL_HEIGHT - (virtual_keyboard_height / TERMINAL_CHAR_HEIGHT);
+    int32_t offset = TERMINAL_HEIGHT - GState->upper_window_line_count;
+    if (GState->status_bar_enabled) {
+        offset--;
+    }
+    scrollback_read_pos += offset - (virtual_keyboard_height / TERMINAL_CHAR_HEIGHT);
     if (scrollback_read_pos > maxpos) {
         scrollback_read_pos = maxpos;
     }
@@ -1130,55 +1168,101 @@ void retro_run(void)
     video_cb(frame_buffer, FRAMEBUFFER_WIDTH, FRAMEBUFFER_HEIGHT, FRAMEBUFFER_WIDTH * 2);
 }
 
+static void split_window_mojozork_libretro(const uint16 oldval, const uint16 newval)
+{
+    if (GState->header.version == 3) { // clear the new top window only in ver3.
+        memset(upper_window, ' ', sizeof (upper_window));
+        must_update_frame_buffer = true;
+    } else {
+        // !!! FIXME: existing screen contents are meant to be preserved? Copy them from scrollback to upper_window?
+        // 8.6.1: "Selecting, or re-sizing, the upper window does not change the screen's appearance."
+    }
+}
+
+static void set_window_mojozork_libretro(const uint16 oldval, const uint16 newval)
+{
+    if (newval == 1) {  // upper window
+        // 8.6.1: "Whenever the upper window is selected, its cursor position is reset to the top left."
+        upper_window_cursor_position = 0;
+    }
+}
+
 static void writestr_mojozork_libretro(const char *str, const uintptr slen)
 {
     char *terminal_buffer = scrollback[SCROLLBACK_LINES - TERMINAL_HEIGHT];
-    scrollback_read_pos = SCROLLBACK_LINES - TERMINAL_HEIGHT;  // if we are in scrollback, snap back to the present time.
-    for (uintptr i = 0; i < slen; i++) {
-        const char ch = str[i];
-        if (ch == '\n') {
-            /* !!! FIXME: this is laziness; we should use a ring buffer, but it'd make all of this more complicated. */
-            memmove(scrollback, &scrollback[1], (SCROLLBACK_LINES - 1) * TERMINAL_WIDTH);
-            memset(scrollback[SCROLLBACK_LINES-1], ' ', TERMINAL_WIDTH);
-            cursor_position = TERMINAL_WIDTH * (TERMINAL_HEIGHT-1);
-            terminal_word_start = -1;
-            if (scrollback_count < SCROLLBACK_LINES) {
-                scrollback_count++;
-            }
-        } else {
-            if (ch == ' ') {
-                terminal_word_start = -1;
-            } else if (terminal_word_start == -1) {
-                terminal_word_start = cursor_position;
-            }
 
-            if ((cursor_position % TERMINAL_WIDTH) == (TERMINAL_WIDTH-1)) {
-                const int wordlen = cursor_position - terminal_word_start;
-                if ((terminal_word_start != -1) && (wordlen < 15)) {  // do a simple wordwrap if possible.
-                    char tmpbuf[17];
-                    tmpbuf[0] = '\n';
-                    memcpy(tmpbuf + 1, terminal_buffer + terminal_word_start, wordlen);
-                    memset(terminal_buffer + terminal_word_start, ' ', wordlen);
-                    cursor_position = terminal_word_start;
-                    writestr_mojozork_libretro(tmpbuf, wordlen + 1);
-                } else {
-                    writestr_mojozork_libretro("\n", 1);
-                }
-                if (ch != ' ') {
-                    writestr_mojozork_libretro(&ch, 1);
+    if (GState->current_window == 0) {
+        scrollback_read_pos = SCROLLBACK_LINES - TERMINAL_HEIGHT;  // if we are in scrollback and write to window 0, snap back to the present time.
+
+        for (uintptr i = 0; i < slen; i++) {
+            const char ch = str[i];
+            if (ch == '\n') {
+                /* !!! FIXME: this is laziness; we should use a ring buffer, but it'd make all of this more complicated. */
+                memmove(scrollback, &scrollback[1], (SCROLLBACK_LINES - 1) * TERMINAL_WIDTH);
+                memset(scrollback[SCROLLBACK_LINES-1], ' ', TERMINAL_WIDTH);
+                cursor_position = TERMINAL_WIDTH * (TERMINAL_HEIGHT-1);
+                terminal_word_start = -1;
+                if (scrollback_count < SCROLLBACK_LINES) {
+                    scrollback_count++;
                 }
             } else {
-                terminal_buffer[cursor_position++] = ch;
+                if (ch == ' ') {
+                    terminal_word_start = -1;
+                } else if (terminal_word_start == -1) {
+                    terminal_word_start = cursor_position;
+                }
+
+                if ((cursor_position % TERMINAL_WIDTH) == (TERMINAL_WIDTH-1)) {
+                    const int wordlen = cursor_position - terminal_word_start;
+                    if ((terminal_word_start != -1) && (wordlen < 15)) {  // do a simple wordwrap if possible.
+                        char tmpbuf[17];
+                        tmpbuf[0] = '\n';
+                        memcpy(tmpbuf + 1, terminal_buffer + terminal_word_start, wordlen);
+                        memset(terminal_buffer + terminal_word_start, ' ', wordlen);
+                        cursor_position = terminal_word_start;
+                        writestr_mojozork_libretro(tmpbuf, wordlen + 1);
+                    } else {
+                        writestr_mojozork_libretro("\n", 1);
+                    }
+                    if (ch != ' ') {
+                        writestr_mojozork_libretro(&ch, 1);
+                    }
+                } else {
+                    terminal_buffer[cursor_position++] = ch;
+                }
             }
         }
+        must_update_frame_buffer = true;
+    } else if (GState->current_window == 1) {  // upper window
+        const int32_t max_cursor_pos = GState->upper_window_line_count * TERMINAL_WIDTH;
+        // upper window does no word wrap or scrolling.
+        for (uintptr i = 0; i < slen; i++) {
+            if (upper_window_cursor_position >= max_cursor_pos) {
+                break;
+            }
+
+            const char ch = str[i];
+            if (ch == '\n') {
+                const int32_t adjust = TERMINAL_WIDTH - (upper_window_cursor_position % TERMINAL_WIDTH);
+                upper_window_cursor_position += adjust;
+            } else {
+                upper_window[upper_window_cursor_position++] = ch;
+            }
+        }
+        must_update_frame_buffer = true;
+    } else {
+        // !!! FIXME: can there be more windows in later Z-Machine revisions?
     }
-    must_update_frame_buffer = true;
 }
 
 static void writestr(const char *str)
 {
+    const uint16_t selected_window = GState->current_window;
+    GState->current_window = 0;  // always write to the "normal" window.
     writestr_mojozork_libretro(str, strlen(str));
+    GState->current_window = selected_window;
 }
+
 
 #if defined(__GNUC__) || defined(__clang__)
 static void die_mojozork_libretro(const char *fmt, ...) __attribute__((noreturn));
@@ -1267,8 +1351,11 @@ static void restart_game(void)
     GState = &zmachine_state;
     GState->writestr = writestr_mojozork_libretro;
     GState->die = die_mojozork_libretro;
+    GState->split_window = split_window_mojozork_libretro;
+    GState->set_window = set_window_mojozork_libretro;
 
     memset(scrollback, ' ', sizeof (scrollback));
+    memset(upper_window, ' ', sizeof (upper_window));
     scrollback_read_pos = SCROLLBACK_LINES - TERMINAL_HEIGHT;
     terminal_word_start = -1;
     cursor_position = TERMINAL_WIDTH * (TERMINAL_HEIGHT-1);
@@ -1297,6 +1384,7 @@ static void restart_game(void)
         GState->status_bar = status_bar;
         GState->status_bar_len = sizeof (status_bar);
         GState->story[1] &= ~(1<<4);  // so the game knows that a status bar is available
+        GState->story[1] |= (1<<5);  // so the game knows that window-splitting is available
 
         // make sure the header matches our tweaks.
         const uint8 *ptr = GState->story;
@@ -1398,14 +1486,14 @@ bool retro_load_game_special(unsigned type, const struct retro_game_info *info, 
 // !!! FIXME: random seeds aren't serialized, so future game state can diverge in small (or not so small) ways when restoring. Maybe that's okay...?
 
 #define MOJOZORK_SERIALIZATION_MAGIC 0x6B5A6A4D  // littleendian number is "MjZk" in ASCII.
-#define MOJOZORK_SERIALIZATION_CURRENT_VERSION 1
+#define MOJOZORK_SERIALIZATION_CURRENT_VERSION 2
 
 /* MAKE SURE THESE STAY IN ORDER: 64-bit first, 32 second, then 16, then BUFFER.
    This will make sure memory accesses stay aligned. */
 #define MOJOZORK_SERIALIZE_STATE(version) { \
     MOJOZORK_SERIALIZE_UINT64(runtime_usecs) \
     MOJOZORK_SERIALIZE_UINT32(GState->instructions_run) \
-    MOJOZORK_SERIALIZE_UINT32(GState->header.staticmem_addr) \
+    if (version < 2) { MOJOZORK_SERIALIZE_UINT32(GState->header.staticmem_addr) } /* whoops, serialized this twice. */ \
     MOJOZORK_SERIALIZE_UINT32(GState->logical_pc) \
     MOJOZORK_SERIALIZE_UINT32(scrollback_read_pos) \
     MOJOZORK_SERIALIZE_UINT32(scrollback_count) \
@@ -1424,10 +1512,14 @@ bool retro_load_game_special(unsigned type, const struct retro_game_info *info, 
     MOJOZORK_SERIALIZE_UINT16(next_inputbuflen) \
     MOJOZORK_SERIALIZE_UINT16(next_inputbuf_pos) \
     MOJOZORK_SERIALIZE_UINT16(input_ready) \
+    if (version >= 2) { MOJOZORK_SERIALIZE_UINT16(GState->current_window) } \
+    if (version >= 2) { MOJOZORK_SERIALIZE_UINT16(GState->upper_window_line_count) } \
+    if (version >= 2) { MOJOZORK_SERIALIZE_UINT16(upper_window_cursor_position) } \
     MOJOZORK_SERIALIZE_BUFFER(GState->story, GState->header.staticmem_addr) \
     MOJOZORK_SERIALIZE_BUFFER(GState->operands, sizeof (GState->operands)) \
     MOJOZORK_SERIALIZE_BUFFER(GState->stack, 256) /* hopefully 256 is enough */ \
     MOJOZORK_SERIALIZE_BUFFER(scrollback, sizeof (scrollback)) \
+    if (version >= 2) { MOJOZORK_SERIALIZE_BUFFER(upper_window, sizeof (upper_window)) } \
 }
 
 size_t retro_serialize_size(void)

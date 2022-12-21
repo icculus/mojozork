@@ -112,6 +112,8 @@ typedef struct ZMachineState
     int status_bar_enabled;
     char *status_bar;
     uintptr status_bar_len;
+    uint16 current_window;
+    uint16 upper_window_line_count;  // if 0, there is no window split.
 
     // this is kinda wasteful (we could pack the 89 opcodes in their various forms
     //  into separate arrays and strip off the metadata bits) but it simplifies
@@ -120,6 +122,9 @@ typedef struct ZMachineState
 
     // The extended ones, however, only have one form, so we pack that tight.
     Opcode extended_opcodes[30];
+
+    void (*split_window)(const uint16 oldval, const uint16 newval);
+    void (*set_window)(const uint16 oldval, const uint16 newval);
 
     void (*writestr)(const char *str, const uintptr slen);
     #if defined(__GNUC__) || defined(__clang__)
@@ -1443,6 +1448,33 @@ static void opcode_verify(void)
     doBranch((((uint16) (checksum % 0x10000)) == GState->header.story_checksum) ? 1 : 0);
 } // opcode_verify
 
+static void opcode_split_window(void)
+{
+    // it's illegal for a game to use this opcode if the implementation reported it doesn't support it.
+    // other targets (libretro, etc) do support it, and set this flag, but the
+    // core MojoZork, which is stdio-only, does not.
+    if ((GState->header.flags1 & (1<<5)) == 0)
+        GState->die("split_window called but implementation doesn't support it!");
+
+    const uint16 oldval = GState->upper_window_line_count;
+    GState->upper_window_line_count = GState->operands[0];
+    if (GState->split_window)
+        GState->split_window(oldval, GState->upper_window_line_count);
+} // opcode_split_window
+
+static void opcode_set_window(void)
+{
+    // it's illegal for a game to use this opcode if the implementation reported it doesn't support it.
+    // other targets (libretro, etc) do support it, and set this flag, but the
+    // core MojoZork, which is stdio-only, does not.
+    if ((GState->header.flags1 & (1<<5)) == 0)
+        GState->die("set_window called but implementation doesn't support it!");
+
+    const uint16 oldval = GState->current_window;
+    GState->current_window = GState->operands[0];
+    if (GState->set_window)
+        GState->set_window(oldval, GState->current_window);
+} // opcode_set_window
 
 static void loadStory(const char *fname);
 
@@ -1490,6 +1522,14 @@ static void opcode_restore(void)
 
     if (!okay)
         GState->die("Failed to restore.");
+
+    // 8.6.1.3: Following a "restore" of the game, the interpreter should automatically collapse the upper window to size 0.
+    if (okay && GState->split_window)
+    {
+        const uint16 oldval = GState->upper_window_line_count;
+        GState->upper_window_line_count = 0;
+        GState->split_window(oldval, 0);
+    } // if
 
     doBranch(okay ? 1 : 0);
 } // opcode_restore
@@ -1804,18 +1844,10 @@ static void inititialOpcodeTableSetup(void)
     if (GState->header.version < 3)  // most early Infocom games are version 3.
         return;  // we're done.
 
-    // since the base interpreter doesn't show a status bar, as it's just
-    //  stdout, other targets that _can_ will want to provide a buffer for the
-    //  status bar 1 char larger than they need (for a null-terminator).
-    //  and also do `GState->story[1] &= ~(1<<4);` so the game knows that a
-    //  status bar is available. opcode_read and opcode_show_status in this
-    //  implementation will fill in the buffer if available, and the target
-    //  can display it as appropriate.
-
     OPCODE(188, show_status);
     OPCODE(189, verify);
-    OPCODE_WRITEME(234, split_window);
-    OPCODE_WRITEME(235, set_window);
+    OPCODE(234, split_window);
+    OPCODE(235, set_window);
     OPCODE_WRITEME(243, output_stream);
     OPCODE_WRITEME(244, input_stream);
     OPCODE_WRITEME(245, sound_effect);
@@ -1966,11 +1998,30 @@ static void initStory(const char *fname, uint8 *story, const uint32 storylen)
     GState->bp = 0;  // base pointer
 
     memset(&GState->header, '\0', sizeof (GState->header));
-    const uint8 *ptr = GState->story;
 
     //GState->story[1] &= ~(1<<3);  // this is the infamous "Tandy Bit". Turn it off.
     GState->story[1] |= (1<<4);  // report that we don't (currently) support a status bar.
 
+    // since the base interpreter doesn't show a status bar, as it's just
+    //  stdout, other targets that _can_ will want to provide a buffer for the
+    //  status bar, 1 char larger than they need (for a null-terminator),
+    //  and also do `GState->story[1] &= ~(1<<4);` so the game knows that a
+    //  status bar is available. opcode_read and opcode_show_status in this
+    //  implementation will fill in the buffer if available, and the target
+    //  can display it as appropriate.
+    //GState->story[1] &= ~(1<<4);  // uncommenting this tells the game that a status bar can be displayed.
+
+    // since the base interpreter doesn't support window-splitting, as it's
+    //  just stdout, other targets that _can_ will want to manage this in
+    //  their writestr implementation, checking GState->current_window and
+    //  GState->upper_window_line_count and do `GState->story[1] |= (1<<5);`
+    //  so the game knows that window-splitting is available, and do the right
+    //  thing when GState->writestr is called. The base interpreter also
+    //  provides optional hooks so the target can know that split_window or
+    //  set_window has been called, so it can manage state.
+    //GState->story[1] |= (1<<5);  // uncommenting this tells the game that a window-splitting is supported.
+
+    const uint8 *ptr = GState->story;
     GState->header.version = READUI8(ptr);
     GState->header.flags1 = READUI8(ptr);
     GState->header.release = READUI16(ptr);
@@ -2073,7 +2124,8 @@ static void writestr_stdio(const char *str, const uintptr slen)
     fwrite(str, 1, (size_t) slen, stdout);
     if (memchr(str, '\n', slen) != NULL)
         fflush(stdout);
-}
+} // writestr_stdio
+
 
 int main(int argc, char **argv)
 {
