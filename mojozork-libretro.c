@@ -305,7 +305,7 @@ void retro_get_system_info(struct retro_system_info *info)
 {
     memset(info, 0, sizeof (*info));
     info->library_name     = "mojozork";
-    info->library_version  = "0.1";
+    info->library_version  = "0.2";
     info->need_fullpath    = false;
     info->valid_extensions = "dat|z1|z3";
  }
