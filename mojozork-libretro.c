@@ -120,6 +120,7 @@ static bool virtual_keyboard_key_pressed = false;
 static char status_bar[TERMINAL_WIDTH + 1];
 static char upper_window[TERMINAL_HEIGHT * TERMINAL_WIDTH];
 static int32_t upper_window_cursor_position = 0;
+static bool frontend_supports_frame_dupe = false;
 
 static const VirtualKeyboardKey virtual_keyboard_keys[5][11] = {
     {
@@ -360,6 +361,9 @@ void retro_set_environment(retro_environment_t cb)
     struct retro_keyboard_callback kbcb;
     kbcb.callback = keyboard_callback;
     cb(RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK, (void *) &kbcb);
+
+    frontend_supports_frame_dupe = false;
+    cb(RETRO_ENVIRONMENT_GET_CAN_DUPE, &frontend_supports_frame_dupe);
 }
 
 void retro_set_audio_sample(retro_audio_sample_t cb) { audio_cb = cb; }
@@ -1127,6 +1131,7 @@ static int update_input(void)  // returns non-zero if the screen changed.
 
 void retro_run(void)
 {
+    bool frame_is_dupe = true;
     bool updated = false;
     if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated) && updated) {
         check_variables();
@@ -1163,9 +1168,10 @@ void retro_run(void)
     if (must_update_frame_buffer) {   /* don't bother redrawing if nothing changed. */
         update_frame_buffer();
         must_update_frame_buffer = false;
+        frame_is_dupe = false;
     }
 
-    video_cb(frame_buffer, FRAMEBUFFER_WIDTH, FRAMEBUFFER_HEIGHT, FRAMEBUFFER_WIDTH * 2);
+    video_cb((frame_is_dupe && frontend_supports_frame_dupe) ? NULL : frame_buffer, FRAMEBUFFER_WIDTH, FRAMEBUFFER_HEIGHT, FRAMEBUFFER_WIDTH * 2);
 }
 
 static void split_window_mojozork_libretro(const uint16 oldval, const uint16 newval)
