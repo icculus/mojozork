@@ -1134,7 +1134,7 @@ static void opcode_print_paddr(void)
 } // opcode_print_paddr
 
 
-static int random_seed = 0;
+static sint32 random_seed = 0;
 static int randomNumber(void)
 {
     // this is POSIX.1-2001's potentially bad suggestion, but we're not exactly doing cryptography here.

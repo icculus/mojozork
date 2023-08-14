@@ -1489,10 +1489,8 @@ bool retro_load_game_special(unsigned type, const struct retro_game_info *info, 
 }
 
 
-// !!! FIXME: random seeds aren't serialized, so future game state can diverge in small (or not so small) ways when restoring. Maybe that's okay...?
-
 #define MOJOZORK_SERIALIZATION_MAGIC 0x6B5A6A4D  // littleendian number is "MjZk" in ASCII.
-#define MOJOZORK_SERIALIZATION_CURRENT_VERSION 2
+#define MOJOZORK_SERIALIZATION_CURRENT_VERSION 3
 
 /* MAKE SURE THESE STAY IN ORDER: 64-bit first, 32 second, then 16, then BUFFER.
    This will make sure memory accesses stay aligned. */
@@ -1526,6 +1524,7 @@ bool retro_load_game_special(unsigned type, const struct retro_game_info *info, 
     MOJOZORK_SERIALIZE_BUFFER(GState->stack, 256) /* hopefully 256 is enough */ \
     MOJOZORK_SERIALIZE_BUFFER(scrollback, sizeof (scrollback)) \
     if (version >= 2) { MOJOZORK_SERIALIZE_BUFFER(upper_window, sizeof (upper_window)) } \
+    if (version >= 3) { MOJOZORK_SERIALIZE_SINT32(random_seed) } \
 }
 
 size_t retro_serialize_size(void)
