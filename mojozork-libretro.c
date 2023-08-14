@@ -1351,7 +1351,7 @@ static void restart_game(void)
 {
     check_variables();
 
-    srandom((unsigned long) time(NULL));
+    random_seed = (int) time(NULL);
 
     memset(&zmachine_state, '\0', sizeof (zmachine_state));
     GState = &zmachine_state;
