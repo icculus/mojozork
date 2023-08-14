@@ -16,12 +16,6 @@
 #include <stdint.h>
 #include <time.h>
 
-// oh well.
-#if defined(_MSC_VER) || defined(__MINGW32__) || defined(__MINGW64__) || defined(_WIN32)
-#define random rand
-#define srandom srand
-#endif
-
 #define MOJOZORK_DEBUGGING 0
 
 static inline void dbg(const char *fmt, ...)
@@ -1139,19 +1133,27 @@ static void opcode_print_paddr(void)
     print_zscii(unpackAddress(GState->operands[0]), 0);
 } // opcode_print_paddr
 
+
+static int random_seed = 0;
+static int randomNumber(void)
+{
+    // this is POSIX.1-2001's potentially bad suggestion, but we're not exactly doing cryptography here.
+    random_seed = random_seed * 1103515245 + 12345;
+    return (int) ((unsigned int) (random_seed / 65536) % 32768);
+}
+
 static uint16 doRandom(const sint16 range)
 {
     uint16 result = 0;
     if (range == 0)  // reseed in "most random way"
-        srandom((unsigned long) time(NULL));
+        random_seed = (int) time(NULL);
     else if (range < 0)  // reseed with specific value
-        srandom(-range);
+        random_seed = -range;
     else
     {
-        FIXME("this is sucky");
-        long r = random();
-        r = (r >> (sizeof (r) / 2) * 8) ^ r;
-        result = (uint16) ((((float) (r & 0xFFFF)) / 65535.0f) * ((float) range));
+        const uint16 lo = 1;
+        const uint16 hi = (uint16) range;
+        result = (((uint16) randomNumber()) % ((hi + 1) - lo)) + lo;
         if (!result)
             result = 1;
     } // else
@@ -2137,7 +2139,7 @@ int main(int argc, char **argv)
     GState->die = die;
     GState->writestr = writestr_stdio;
 
-    srandom((unsigned long) time(NULL));
+    random_seed = (int) time(NULL);
 
     loadStory(fname);
 

@@ -1,4 +1,4 @@
-#random -2345
+#random -2
 open mailbox
 read leaflet
 drop leaflet
@@ -311,9 +311,6 @@ take sword
 go west
 go west
 go up
-kill thief with sword
-kill thief with sword
-kill thief with sword
 kill thief with sword
 kill thief with sword
 kill thief with sword
