@@ -1333,7 +1333,7 @@ static void opcode_read(void)
     const uint8 parselen = *(parse++);
 
     dbg("max parse: %u\n", (unsigned int) parselen);
-    if (parselen < 4)
+    if (parselen == 0)
         GState->die("parse buffer is too small for reading");  // happens on buffer overflow.
 
     updateStatusBar();
