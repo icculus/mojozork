@@ -28,7 +28,7 @@
 #define MULTIZORK 1
 #include "mojozork.c"
 
-#define MULTIZORKD_VERSION "0.0.8"
+#define MULTIZORKD_VERSION "0.0.9"
 #define MULTIZORKD_DEFAULT_PORT 23  /* telnet! */
 #define MULTIZORKD_DEFAULT_BACKLOG 64
 #define MULTIZORKD_DEFAULT_EGID 0
@@ -2433,8 +2433,9 @@ static int accept_new_connection(const int listensock)
         write_to_connection(conn, "Sorry, this address is currently blocked.\n");
         drop_connection(conn);
     } else {
-        write_to_connection(conn, "\n" MULTIZORK_TRANSCRIPT_BASEURL "\n");
-        write_to_connection(conn, "(version " MULTIZORKD_VERSION " built " __DATE__ " " __TIME__ ".)\n\n\n");
+        write_to_connection(conn, conn->address);
+        write_to_connection(conn, "\n\n" MULTIZORK_TRANSCRIPT_BASEURL "\n");
+        write_to_connection(conn, "\n(version " MULTIZORKD_VERSION " built " __DATE__ " " __TIME__ ".)\n\n\n");
         write_to_connection(conn, "Hello sailor!\n\nIf you are returning, go ahead and type in your access code.\nOtherwise, just press enter.\n\n>");
     }
 
