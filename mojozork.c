@@ -1587,7 +1587,7 @@ static void calculateStatusBar(char *buf, uint8 *highlight, size_t buflen)
 {
     // if not a score game, then it's a time game.
     const int score_game = (GState->header.version < 3) || ((GState->header.flags1 & (1<<1)) == 0);
-    const uint8 *addr = varAddress(0x10, 0, 0);
+    const uint8 *addr = varAddress(0x10, 0);
     const uint16 objid = READUI16(addr);
     const uint16 scoreval = READUI16(addr);
     const uint16 movesval = READUI16(addr);
