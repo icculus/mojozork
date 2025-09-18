@@ -20,7 +20,7 @@
 
 #define MOJOZORK_LIBRETRO 1
 #include "mojozork.c"
-#include "mojozork-libretro-font.h"
+#include "mojozork-fonts.h"
 
 // Touch input should work on any platform, but on several desktop platforms
 //  this RETRO_DEVICE_POINTER just gives you mouse input atm, so rather
@@ -54,12 +54,17 @@ static int16_t scale_mouse_to_touch_coords(const int16_t m, const int16_t maxsiz
 // !!! FIXME: ...but perhaps this bulk isn't a big deal when this isn't
 // !!! FIXME:  exactly a thing that benefits from frame-by-frame snapshots.
 
+static const MOJOZORK_Font *current_font = &font_standard;
+
+#define MAX_TERMINAL_WIDTH 80   // fonts can't be too small that they'd overflow this.
+#define MAX_TERMINAL_HEIGHT 40   // fonts can't be too small that they'd overflow this.
+
 #define FRAMEBUFFER_WIDTH 640
 #define FRAMEBUFFER_HEIGHT 480
 #define VIRTUAL_KEYBOARD_HEIGHT 105
 #define FRAMEBUFFER_PIXELS (FRAMEBUFFER_WIDTH * FRAMEBUFFER_HEIGHT)
-#define TERMINAL_CHAR_WIDTH (LIBRETROFONT_WIDTH / 256)
-#define TERMINAL_CHAR_HEIGHT LIBRETROFONT_HEIGHT
+#define TERMINAL_CHAR_WIDTH (current_font->w / 256)
+#define TERMINAL_CHAR_HEIGHT current_font->h
 #define TERMINAL_WIDTH (FRAMEBUFFER_WIDTH / TERMINAL_CHAR_WIDTH)
 #define TERMINAL_HEIGHT (FRAMEBUFFER_HEIGHT / TERMINAL_CHAR_HEIGHT)
 #define VIDEO_WIDTH (TERMINAL_WIDTH * TERMINAL_CHAR_WIDTH)
@@ -68,9 +73,7 @@ static int16_t scale_mouse_to_touch_coords(const int16_t m, const int16_t maxsiz
 #define VIDEO_Y_OFFSET ((FRAMEBUFFER_HEIGHT - VIDEO_HEIGHT) / 2)
 #define SCROLLBACK_LINES 5000
 
-static const uint16_t glyph_color[2] = { 0x0000, 0xFFFF };
-
-// these are indexes into glyph_color; values outside the array are transparent (not drawn).
+// these are indexes into the font colors; values outside the array are transparent (not drawn).
 #define MOUSE_CURSOR_WIDTH 10
 #define MOUSE_CURSOR_HEIGHT 16
 static const uint8_t mouse_cursor[] = {
@@ -107,18 +110,19 @@ static struct retro_log_callback logging;
 static retro_log_printf_t log_cb;
 static float last_aspect;
 static float last_sample_rate;
-static char scrollback[SCROLLBACK_LINES][TERMINAL_WIDTH];
-static int32_t scrollback_read_pos = SCROLLBACK_LINES - TERMINAL_HEIGHT;
-static int32_t scrollback_count = TERMINAL_HEIGHT;
-static int32_t cursor_position = TERMINAL_WIDTH * (TERMINAL_HEIGHT-1);
+static char scrollback[SCROLLBACK_LINES][MAX_TERMINAL_WIDTH];
+static int32_t scrollback_read_pos = 0;  // will be set to (SCROLLBACK_LINES - TERMINAL_HEIGHT) when starting/unserializing game.
+static int32_t scrollback_count = 0;  // will be set to TERMINAL_HEIGHT when starting game (and is serialized for restore).
+static int32_t cursor_position = 0; // will be set to (TERMINAL_WIDTH * (TERMINAL_HEIGHT-1)) when starting game (and is serialized for restore).
 static int32_t terminal_word_start = -1;
 static int32_t virtual_keyboard_height = 0;
 static bool virtual_keyboard_enabled = false;
 static uint16_t virtual_keyboard_image[VIRTUAL_KEYBOARD_HEIGHT * FRAMEBUFFER_WIDTH];
 static const VirtualKeyboardKey *virtual_keyboard_key_highlighted = NULL;
 static bool virtual_keyboard_key_pressed = false;
-static char status_bar[TERMINAL_WIDTH + 1];
-static char upper_window[TERMINAL_HEIGHT * TERMINAL_WIDTH];
+static char status_bar[MAX_TERMINAL_WIDTH + 1];
+static uint8_t status_bar_highlight[MAX_TERMINAL_WIDTH + 1];
+static char upper_window[MAX_TERMINAL_HEIGHT * MAX_TERMINAL_WIDTH];
 static int32_t upper_window_cursor_position = 0;
 static bool frontend_supports_frame_dupe = false;
 
@@ -250,6 +254,10 @@ static retro_environment_t environ_cb;
 
 static void init_virtual_keyboard_image(void)
 {
+    const MOJOZORK_Font *actual_font = current_font;
+    current_font = &font_standard;
+    const uint16_t glyph_color[2] = { current_font->background, current_font->foreground };
+
     for (int i = 0; i < (sizeof (virtual_keyboard_image) / sizeof (virtual_keyboard_image[0])); i++) {
         virtual_keyboard_image[i] = 0x001F;
     }
@@ -274,11 +282,13 @@ static void init_virtual_keyboard_image(void)
             dst += ((h - TERMINAL_CHAR_HEIGHT) / 2) * FRAMEBUFFER_WIDTH;
             dst += (w - (slen * TERMINAL_CHAR_WIDTH)) / 2;
 
+            const uint8_t *fontdata = current_font->data;
+            const int fontw = current_font->w;
             for (int fy = 0; fy < TERMINAL_CHAR_HEIGHT; fy++) {
                 uint16_t *next_dst = dst + FRAMEBUFFER_WIDTH;
                 for (int x = 0; x < slen; x++) {
                     const uint32_t ch = (uint32_t) (unsigned char) sym[x];
-                    const uint8_t *glyph = &libretrofont_data[(ch * TERMINAL_CHAR_WIDTH) + (LIBRETROFONT_WIDTH * fy)];
+                    const uint8_t *glyph = &fontdata[(ch * TERMINAL_CHAR_WIDTH) + (fontw * fy)];
                     for (int fx = 0; fx < TERMINAL_CHAR_WIDTH; fx++) {
                         *(dst++) = glyph_color[glyph[fx]];
                     }
@@ -287,6 +297,7 @@ static void init_virtual_keyboard_image(void)
             }
         }
     }
+    current_font = actual_font;
 }
 
 void retro_init(void)
@@ -306,7 +317,7 @@ void retro_get_system_info(struct retro_system_info *info)
 {
     memset(info, 0, sizeof (*info));
     info->library_name     = "mojozork";
-    info->library_version  = "0.2";
+    info->library_version  = "0.3";
     info->need_fullpath    = false;
     info->valid_extensions = "dat|z1|z3";
  }
@@ -364,6 +375,13 @@ void retro_set_environment(retro_environment_t cb)
 
     frontend_supports_frame_dupe = false;
     cb(RETRO_ENVIRONMENT_GET_CAN_DUPE, &frontend_supports_frame_dupe);
+
+    static const struct retro_variable cvars[] = {
+        { "style", "Visual style to use for gameplay; Standard|AppleII|MS-DOS|Commodore-64" },
+        { NULL, NULL },
+    };
+
+    cb(RETRO_ENVIRONMENT_SET_VARIABLES, (void*) cvars);
 }
 
 void retro_set_audio_sample(retro_audio_sample_t cb) { audio_cb = cb; }
@@ -372,7 +390,27 @@ void retro_set_input_poll(retro_input_poll_t cb) { input_poll_cb = cb; }
 void retro_set_input_state(retro_input_state_t cb) { input_state_cb = cb; }
 void retro_set_video_refresh(retro_video_refresh_t cb) { video_cb = cb; }
 
-static void check_variables(void) {}
+static void check_variables(void)
+{
+    struct retro_variable var = {0};
+
+    const char *requested_style = "standard";
+    var.key = "style";
+    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
+        requested_style = var.value;
+    }
+
+    #define CHECK_STYLE(style, name) \
+        if ((current_font != &font_##name) && (strcmp(requested_style, style) == 0)) { \
+            current_font = &font_##name; \
+            if (GState) { GState->status_bar_len = TERMINAL_WIDTH+1; updateStatusBar(); } \
+        }
+    CHECK_STYLE("Standard", standard);
+    CHECK_STYLE("AppleII", appleii);
+    CHECK_STYLE("MS-DOS", msdos);
+    CHECK_STYLE("Commodore-64", c64);
+    #undef CHECK_STYLE
+}
 
 static void writestr(const char *str);
 
@@ -404,15 +442,27 @@ static void enable_virtual_keyboard(const bool enable)
 
 static void update_frame_buffer(void)
 {
+    const uint16_t glyph_color[2] = { current_font->background, current_font->foreground };
+    const uint8_t *fontdata = current_font->data;
+    const int fontw = current_font->w;
+
     // we draw from the bottom to the top, so if we have a partial row of characters, we can
     //  just stop drawing once we hit the top.
     const char *terminal_buffer = scrollback[scrollback_read_pos];
-    const char *term_src = terminal_buffer + (TERMINAL_WIDTH * (TERMINAL_HEIGHT - 1));
+    const char *term_src = terminal_buffer + (MAX_TERMINAL_WIDTH * (TERMINAL_HEIGHT - 1));
     uint16_t *orig_dst = frame_buffer + ((VIDEO_Y_OFFSET * FRAMEBUFFER_WIDTH) + VIDEO_X_OFFSET);
     uint16_t *end_dst = orig_dst + (FRAMEBUFFER_WIDTH * FRAMEBUFFER_HEIGHT);
     uint16_t *dst = end_dst - FRAMEBUFFER_WIDTH;
 
-    memset(frame_buffer, '\0', sizeof (frame_buffer));
+    // memset might be quicker if both bytes of the color are the same.
+    const uint16_t clear_color = current_font->clear_color;
+    if ((clear_color >> 8) == (clear_color & 0xFF)) {
+        memset(frame_buffer, (clear_color & 0xFF), sizeof (frame_buffer));
+    } else {
+        for (int i = 0; i < (sizeof (frame_buffer) / sizeof (frame_buffer[0])); i++) {
+            frame_buffer[i] = clear_color;
+        }
+    }
 
     if (GState->status_bar_enabled) {
         orig_dst += FRAMEBUFFER_WIDTH * TERMINAL_CHAR_HEIGHT;
@@ -431,7 +481,7 @@ static void update_frame_buffer(void)
             uint16_t *next_dst = dst - FRAMEBUFFER_WIDTH;  // draw rows bottom to top.
             for (int x = 0; x < TERMINAL_WIDTH; x++) {
                 const uint32_t ch = (uint32_t) (unsigned char) term_src[x];
-                const uint8_t *glyph = &libretrofont_data[(ch * TERMINAL_CHAR_WIDTH) + (LIBRETROFONT_WIDTH * fy)];
+                const uint8_t *glyph = &fontdata[(ch * TERMINAL_CHAR_WIDTH) + (fontw * fy)];
                 for (int fx = 0; fx < TERMINAL_CHAR_WIDTH; fx++) {
                     *(dst++) = glyph_color[glyph[fx]];
                 }
@@ -439,12 +489,12 @@ static void update_frame_buffer(void)
             dst = next_dst;
         }
 
-        term_src -= TERMINAL_WIDTH;  // draw rows bottom to top.
+        term_src -= MAX_TERMINAL_WIDTH;  // draw rows bottom to top.
     }
 
     // !!! FIXME: move this to a subroutine
     if (GState->upper_window_line_count) {
-        const char *term_src = upper_window + (TERMINAL_WIDTH * (GState->upper_window_line_count - 1));
+        const char *term_src = upper_window + (MAX_TERMINAL_WIDTH * (GState->upper_window_line_count - 1));
         orig_dst = frame_buffer + ((VIDEO_Y_OFFSET * FRAMEBUFFER_WIDTH) + VIDEO_X_OFFSET);
         if (GState->status_bar_enabled) {
             orig_dst += FRAMEBUFFER_WIDTH * TERMINAL_CHAR_HEIGHT;
@@ -454,7 +504,7 @@ static void update_frame_buffer(void)
                 uint16_t *next_dst = dst - FRAMEBUFFER_WIDTH;  // draw rows bottom to top.
                 for (int x = 0; x < TERMINAL_WIDTH; x++) {
                     const uint32_t ch = (uint32_t) (unsigned char) term_src[x];
-                    const uint8_t *glyph = &libretrofont_data[(ch * TERMINAL_CHAR_WIDTH) + (LIBRETROFONT_WIDTH * fy)];
+                    const uint8_t *glyph = &fontdata[(ch * TERMINAL_CHAR_WIDTH) + (fontw * fy)];
                     for (int fx = 0; fx < TERMINAL_CHAR_WIDTH; fx++) {
                         *(dst++) = glyph_color[glyph[fx]];
                     }
@@ -462,7 +512,7 @@ static void update_frame_buffer(void)
                 dst = next_dst;
             }
 
-            term_src -= TERMINAL_WIDTH;  // draw rows bottom to top.
+            term_src -= MAX_TERMINAL_WIDTH;  // draw rows bottom to top.
         }
     }
 
@@ -474,9 +524,20 @@ static void update_frame_buffer(void)
             uint16_t *next_dst = dst - FRAMEBUFFER_WIDTH;  // draw rows bottom to top.
             for (int x = 0; x < TERMINAL_WIDTH; x++) {
                 const uint32_t ch = (uint32_t) (unsigned char) GState->status_bar[x];
-                const uint8_t *glyph = &libretrofont_data[(ch * TERMINAL_CHAR_WIDTH) + (LIBRETROFONT_WIDTH * fy)];
-                for (int fx = 0; fx < TERMINAL_CHAR_WIDTH; fx++) {
-                    *(dst++) = glyph_color[glyph[fx] ? 0 : 1];
+                const uint8_t *glyph = &fontdata[(ch * TERMINAL_CHAR_WIDTH) + (fontw * fy)];
+                const bool draw = ( (current_font->statusbar_full_highlight == 1) ||
+                                    ((current_font->statusbar_full_highlight == 0) && (GState->status_bar_char_highlight[x])) ||
+                                    ((current_font->statusbar_full_highlight == 2) && (GState->status_bar_char_highlight[x] == 1)) );
+
+                if (!draw) {
+                    const uint16_t color = glyph_color[0];
+                    for (int fx = 0; fx < TERMINAL_CHAR_WIDTH; fx++) {
+                        *(dst++) = color;
+                    }
+                } else {
+                    for (int fx = 0; fx < TERMINAL_CHAR_WIDTH; fx++) {
+                        *(dst++) = glyph_color[glyph[fx] ? 0 : 1];
+                    }
                 }
             }
             dst = next_dst;
@@ -513,6 +574,7 @@ static void update_frame_buffer(void)
     }
 
     if ((current_input_device == CURRENTINPUTDEV_MOUSE) || TEST_TOUCH_WITH_MOUSE) {
+        const uint16_t cursor_color[2] = { 0x0000, 0xFFFF };
         int maxy = FRAMEBUFFER_HEIGHT - mouse_y;
         if (maxy > MOUSE_CURSOR_HEIGHT) { maxy = MOUSE_CURSOR_HEIGHT; }
         int maxx = FRAMEBUFFER_WIDTH - mouse_x;
@@ -524,8 +586,8 @@ static void update_frame_buffer(void)
             uint16_t *next_dst = dst + FRAMEBUFFER_WIDTH;
             for (int x = 0; x < maxx; x++) {
                 const int pixel = (int) *(cursor++);
-                if (pixel < (sizeof (glyph_color) - 1)) {
-                    *dst = glyph_color[pixel];
+                if (pixel < (sizeof (cursor_color) - 1)) {
+                    *dst = cursor_color[pixel];
                 }
                 dst++;
             }
@@ -630,7 +692,7 @@ static bool handle_keypress(const bool down, const unsigned keycode, const uint3
         return true;
     } else if ((ch < 32) || (ch >= 127)) {  // basic ASCII only, sorry.
         return false;
-    } else if ((next_inputbuf_pos >= next_inputbuflen) || (cursor_position >= ((TERMINAL_WIDTH * TERMINAL_HEIGHT) - 2))) {
+    } else if ((next_inputbuf_pos >= next_inputbuflen) || (cursor_position >= ((MAX_TERMINAL_WIDTH * TERMINAL_HEIGHT) - 2))) {
         return false;  // drop this, they're typing too much.
     }
 
@@ -1204,9 +1266,9 @@ static void writestr_mojozork_libretro(const char *str, const uintptr slen)
             const char ch = str[i];
             if (ch == '\n') {
                 /* !!! FIXME: this is laziness; we should use a ring buffer, but it'd make all of this more complicated. */
-                memmove(scrollback, &scrollback[1], (SCROLLBACK_LINES - 1) * TERMINAL_WIDTH);
-                memset(scrollback[SCROLLBACK_LINES-1], ' ', TERMINAL_WIDTH);
-                cursor_position = TERMINAL_WIDTH * (TERMINAL_HEIGHT-1);
+                memmove(scrollback, &scrollback[1], (SCROLLBACK_LINES - 1) * MAX_TERMINAL_WIDTH);
+                memset(scrollback[SCROLLBACK_LINES-1], ' ', MAX_TERMINAL_WIDTH);
+                cursor_position = MAX_TERMINAL_WIDTH * (TERMINAL_HEIGHT-1);
                 terminal_word_start = -1;
                 if (scrollback_count < SCROLLBACK_LINES) {
                     scrollback_count++;
@@ -1218,7 +1280,7 @@ static void writestr_mojozork_libretro(const char *str, const uintptr slen)
                     terminal_word_start = cursor_position;
                 }
 
-                if ((cursor_position % TERMINAL_WIDTH) == (TERMINAL_WIDTH-1)) {
+                if (((cursor_position % MAX_TERMINAL_WIDTH) % TERMINAL_WIDTH) == (TERMINAL_WIDTH-1)) {
                     const int wordlen = cursor_position - terminal_word_start;
                     if ((terminal_word_start != -1) && (wordlen < 15)) {  // do a simple wordwrap if possible.
                         char tmpbuf[17];
@@ -1362,9 +1424,10 @@ static void restart_game(void)
 
     memset(scrollback, ' ', sizeof (scrollback));
     memset(upper_window, ' ', sizeof (upper_window));
+    scrollback_count = TERMINAL_HEIGHT;
     scrollback_read_pos = SCROLLBACK_LINES - TERMINAL_HEIGHT;
     terminal_word_start = -1;
-    cursor_position = TERMINAL_WIDTH * (TERMINAL_HEIGHT-1);
+    cursor_position = MAX_TERMINAL_WIDTH * (TERMINAL_HEIGHT-1);
     must_update_frame_buffer = true;
     next_inputbuf = NULL;
     next_inputbuflen = 0;
@@ -1388,7 +1451,8 @@ static void restart_game(void)
         memset(status_bar, ' ', sizeof (status_bar));
         GState->status_bar_enabled = 1;
         GState->status_bar = status_bar;
-        GState->status_bar_len = sizeof (status_bar);
+        GState->status_bar_char_highlight = status_bar_highlight;
+        GState->status_bar_len = TERMINAL_WIDTH+1;
         GState->story[1] &= ~(1<<4);  // so the game knows that a status bar is available
         GState->story[1] |= (1<<5);  // so the game knows that window-splitting is available
 
@@ -1490,7 +1554,7 @@ bool retro_load_game_special(unsigned type, const struct retro_game_info *info, 
 
 
 #define MOJOZORK_SERIALIZATION_MAGIC 0x6B5A6A4D  // littleendian number is "MjZk" in ASCII.
-#define MOJOZORK_SERIALIZATION_CURRENT_VERSION 3
+#define MOJOZORK_SERIALIZATION_CURRENT_VERSION 4
 
 /* MAKE SURE THESE STAY IN ORDER: 64-bit first, 32 second, then 16, then BUFFER.
    This will make sure memory accesses stay aligned. */
@@ -1504,6 +1568,7 @@ bool retro_load_game_special(unsigned type, const struct retro_game_info *info, 
     MOJOZORK_SERIALIZE_SINT32(cursor_position) \
     MOJOZORK_SERIALIZE_SINT32(terminal_word_start) \
     if (version >= 1) { MOJOZORK_SERIALIZE_SINT32(GState->status_bar_enabled) } \
+    if (version >= 4) { MOJOZORK_SERIALIZE_SINT32(random_seed) }  /* whoops, this wasn't sorted by datatype */ \
     MOJOZORK_SERIALIZE_UINT16(GState->header.staticmem_addr) \
     MOJOZORK_SERIALIZE_UINT16(logical_sp) \
     MOJOZORK_SERIALIZE_UINT16(GState->bp) \
@@ -1522,9 +1587,14 @@ bool retro_load_game_special(unsigned type, const struct retro_game_info *info, 
     MOJOZORK_SERIALIZE_BUFFER(GState->story, GState->header.staticmem_addr) \
     MOJOZORK_SERIALIZE_BUFFER(GState->operands, sizeof (GState->operands)) \
     MOJOZORK_SERIALIZE_BUFFER(GState->stack, 256) /* hopefully 256 is enough */ \
-    MOJOZORK_SERIALIZE_BUFFER(scrollback, sizeof (scrollback)) \
-    if (version >= 2) { MOJOZORK_SERIALIZE_BUFFER(upper_window, sizeof (upper_window)) } \
-    if (version >= 3) { MOJOZORK_SERIALIZE_SINT32(random_seed) } \
+    if (version >= 4) { /* buffers got bigger in version 4. */ \
+        MOJOZORK_SERIALIZE_BUFFER(scrollback, sizeof (scrollback)) \
+        if (version >= 2) { MOJOZORK_SERIALIZE_BUFFER(upper_window, sizeof (upper_window)) } \
+    } else { \
+        for (int i = 0; i < 5000; i++) { MOJOZORK_SERIALIZE_BUFFER(scrollback[i], 71) } \
+        if (version >= 2) { MOJOZORK_SERIALIZE_BUFFER(upper_window, 71 * 32) } \
+        if (version >= 3) { MOJOZORK_SERIALIZE_SINT32(random_seed) }  /* whoops, this wasn't sorted by datatype */ \
+    } \
 }
 
 size_t retro_serialize_size(void)
@@ -1616,7 +1686,7 @@ bool retro_unserialize(const void *data_, size_t size)
     #undef MOJOZORK_SERIALIZE_BUFFER
 
     GState->status_bar = status_bar;
-    GState->status_bar_len = sizeof (status_bar);
+    GState->status_bar_len = TERMINAL_WIDTH+1;
     GState->sp = GState->stack + logical_sp;
     next_inputbuf = logical_next_inputbuf ? (GState->story + logical_next_inputbuf) : NULL;
 

@@ -105,6 +105,7 @@ typedef struct ZMachineState
     char *story_filename;
     int status_bar_enabled;
     char *status_bar;
+    uint8 *status_bar_char_highlight;
     uintptr status_bar_len;
     uint16 current_window;
     uint16 upper_window_line_count;  // if 0, there is no window split.
@@ -1582,16 +1583,21 @@ static uint8 parseVarOperands(uint16 *operands)
     return i;
 } // parseVarOperands
 
-static void calculateStatusBar(char *buf, size_t buflen)
+static void calculateStatusBar(char *buf, uint8 *highlight, size_t buflen)
 {
     // if not a score game, then it's a time game.
     const int score_game = (GState->header.version < 3) || ((GState->header.flags1 & (1<<1)) == 0);
-    const uint8 *addr = varAddress(0x10, 0);
+    const uint8 *addr = varAddress(0x10, 0, 0);
     const uint16 objid = READUI16(addr);
     const uint16 scoreval = READUI16(addr);
     const uint16 movesval = READUI16(addr);
     const uint8 *objzstr = getObjectShortName(objid);
+    const int short_score = (buflen < 50);  // this is a hack to make the C-64 UI in the libretro code look like the original.
+
     char objstr[64];
+
+    if (highlight)
+        memset(highlight, 0, buflen);
 
     memset(buf, ' ', buflen - 1);
     buf[buflen - 1] = '\0';
@@ -1604,7 +1610,9 @@ static void calculateStatusBar(char *buf, size_t buflen)
         objstr[(decoded_chars < sizeof (objstr)) ? decoded_chars : sizeof (objstr) - 1] = '\0';
     } // if
 
-    const int scoremovelen = score_game ? (3 + 4 + 20) : (2 + 2 + 16);
+    const int scoremovelen = short_score ?
+                                (score_game ? (3 + 4 + 8) : (2 + 2 + 9)) :
+                                (score_game ? (3 + 4 + 20) : (2 + 2 + 16));
     if (buflen < scoremovelen)
         return;  // oh well.
 
@@ -1623,18 +1631,40 @@ static void calculateStatusBar(char *buf, size_t buflen)
     } // if
 
     snprintf(buf, buflen, "%s", objstr);
-    buf[strlen(buf)] = ' ';
+    const int slen = strlen(buf);
+    buf[slen] = ' ';
+    if (highlight)
+        memset(highlight, 1, slen);
 
+    int scorestrlen = 0;
     if (score_game)
-        snprintf((buf + buflen) - scoremovelen, scoremovelen, "     Score:%-3d  Moves:%-4u", (int) scoreval, (unsigned int) movesval);
+    {
+        if (short_score)
+            scorestrlen = snprintf((buf + buflen) - scoremovelen, scoremovelen, "Score: %d/%u", (int) scoreval, (unsigned int) movesval);
+        else
+            scorestrlen = snprintf((buf + buflen) - scoremovelen, scoremovelen, "     Score:%-3d  Moves:%-4u", (int) scoreval, (unsigned int) movesval);
+    } // if
     else
-        snprintf((buf + buflen) - scoremovelen, scoremovelen, "     Time: %2u:%02u %s", (unsigned int) (scoreval % 12) + 1, (unsigned int) movesval, (scoreval < 12) ? "am" : "pm");
+    {
+        if (short_score) {
+            scorestrlen = snprintf((buf + buflen) - scoremovelen, scoremovelen, "Time: %2u:%02u %s", (unsigned int) (scoreval % 12) + 1, (unsigned int) movesval, (scoreval < 12) ? "am" : "pm");
+        } else {
+            scorestrlen = snprintf((buf + buflen) - scoremovelen, scoremovelen, "     Time: %2u:%02u %s", (unsigned int) (scoreval % 12) + 1, (unsigned int) movesval, (scoreval < 12) ? "am" : "pm");
+        }
+    }
+
+    if (highlight)
+    {
+        memset((highlight + buflen) - scoremovelen, 1, scorestrlen);
+        if (short_score)
+            highlight[(buflen - scoremovelen) + (score_game ? 6 : 5)] = 2;
+    } // if
 } // calculateStatusBar
 
 static void updateStatusBar(void)
 {
     if (GState->status_bar && GState->status_bar_len && GState->status_bar_enabled)
-        calculateStatusBar(GState->status_bar, GState->status_bar_len);
+        calculateStatusBar(GState->status_bar, GState->status_bar_char_highlight, GState->status_bar_len);
 } // updateStatusBar
 
 
