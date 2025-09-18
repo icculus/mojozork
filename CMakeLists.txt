@@ -1,5 +1,5 @@
+cmake_minimum_required(VERSION 3.5.0)
 project(mojozork)
-cmake_minimum_required(VERSION 3.0.0)
 
 set(MOJOZORK_STANDALONE_DEFAULT ON)
 set(MOJOZORK_MULTIZORK_DEFAULT ON)
