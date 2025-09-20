@@ -72,10 +72,9 @@ if(MOJOZORK_SDL3)
     endif()
 
     add_executable(mojozork_sdl3 mojozork-sdl3.c)
-
+    set_target_properties(mojozork_sdl3 PROPERTIES OUTPUT_NAME "mojozork-sdl3")
     target_link_libraries(mojozork_sdl3 SDL3::SDL3)
     if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
-        set_target_properties(mojozork_sdl3 PROPERTIES OUTPUT_NAME "mojozork-wasm")
         set_target_properties(mojozork_sdl3 PROPERTIES LINK_FLAGS "-s WASM=1 -s ALLOW_MEMORY_GROWTH=1 -s ASSERTIONS=0")
     endif()
 endif()
