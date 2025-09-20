@@ -6,12 +6,17 @@ set(MOJOZORK_MULTIZORK_DEFAULT ON)
 set(MOJOZORK_LIBRETRO_DEFAULT ON)
 set(MOJOZORK_SDL3_DEFAULT ON)
 
-if(MSVC)   # the daemon is pretty Unixy.
-    set(MOJOZORK_MULTIZORK_DEFAULT OFF)
+if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
+  set(EMSCRIPTEN TRUE)
 endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Android")
     set(ANDROID TRUE)
+endif()
+
+
+if(MSVC OR EMSCRIPTEN)   # the daemon is pretty Unixy.
+    set(MOJOZORK_MULTIZORK_DEFAULT OFF)
 endif()
 
 # Building as part of RetroArch? Turn off everything but the libretro plugin by default.
