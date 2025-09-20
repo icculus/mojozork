@@ -57,8 +57,9 @@ if(MOJOZORK_LIBRETRO)
 endif()
 
 if(MOJOZORK_SDL3)
-    find_package(SDL3)
+    find_package(SDL3 QUIET)
     if (NOT SDL3_FOUND)
+        message(STATUS "SDL3 not available, will download a copy and build it.")
         # FetchContent downloads and configures dependencies
         include(FetchContent)
         FetchContent_Declare(
