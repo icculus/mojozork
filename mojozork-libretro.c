@@ -366,7 +366,7 @@ void retro_set_environment(retro_environment_t cb)
 
     struct retro_frame_time_callback ftcb;
     ftcb.callback = frame_time_callback;
-    ftcb.reference = 1000000 / 15;  // !!! FIXME: 15?
+    ftcb.reference = 1000000 / 30;  // !!! FIXME: 30?
     cb(RETRO_ENVIRONMENT_SET_FRAME_TIME_CALLBACK, (void *) &ftcb);
 
     struct retro_keyboard_callback kbcb;
@@ -394,7 +394,7 @@ static void check_variables(void)
 {
     struct retro_variable var = {0};
 
-    const char *requested_style = "standard";
+    const char *requested_style = "Standard";
     var.key = "style";
     if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
         requested_style = var.value;
@@ -895,7 +895,7 @@ static bool process_keyboard_callback(bool down, unsigned keycode, uint32_t ch)
 
 static void RETRO_CALLCONV keyboard_callback(bool down, unsigned keycode, uint32_t ch, uint16_t key_modifiers)
 {
-    must_update_frame_buffer = process_keyboard_callback(down, keycode, ch);
+    must_update_frame_buffer |= process_keyboard_callback(down, keycode, ch);
 }
 
 static void query_controller_state(ControllerState *state)
@@ -1218,7 +1218,7 @@ void retro_run(void)
     }
 
     // only blink the cursor if not wading through the scrollback.
-    if (scrollback_read_pos== (SCROLLBACK_LINES - TERMINAL_HEIGHT)) {
+    if (scrollback_read_pos == (SCROLLBACK_LINES - TERMINAL_HEIGHT)) {
         char *terminal_buffer = scrollback[scrollback_read_pos];
         const char cursor_char = ((runtime_usecs / 1000000) % 2) ? ' ' : 0xFF;
         if (cursor_char != terminal_buffer[cursor_position]) {
