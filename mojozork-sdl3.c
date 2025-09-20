@@ -196,8 +196,6 @@ static void maybe_show_system_cursor(void)
 
 SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
 {
-argc++;
-argv[1] = "/zork1.dat";
     retro_api_version();
 
     struct retro_system_info sysinfo;
