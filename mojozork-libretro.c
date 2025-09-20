@@ -22,6 +22,10 @@
 #include "mojozork.c"
 #include "mojozork-fonts.h"
 
+#ifndef DRAW_OWN_MOUSE_CURSOR
+#define DRAW_OWN_MOUSE_CURSOR 1
+#endif
+
 // Touch input should work on any platform, but on several desktop platforms
 //  this RETRO_DEVICE_POINTER just gives you mouse input atm, so rather
 //  than risk the confusion, we turn off touch support if you aren't on
@@ -573,6 +577,7 @@ static void update_frame_buffer(void)
         }
     }
 
+    #if DRAW_OWN_MOUSE_CURSOR
     if ((current_input_device == CURRENTINPUTDEV_MOUSE) || TEST_TOUCH_WITH_MOUSE) {
         const uint16_t cursor_color[2] = { 0x0000, 0xFFFF };
         int maxy = FRAMEBUFFER_HEIGHT - mouse_y;
@@ -595,6 +600,7 @@ static void update_frame_buffer(void)
             dst = next_dst;
         }
     }
+    #endif
 }
 
 static retro_usec_t prev_runtime_usecs = 0;
@@ -1088,9 +1094,11 @@ static int update_input(void)  // returns non-zero if the screen changed.
         // only redraw unless the user has previously clicked a button to make this the current input,
         //  and don't take mouse motion as a signal to make it the current input device, so bumping the
         // mouse a little doesn't cause confusion.
+        #if DRAW_OWN_MOUSE_CURSOR
         if (current_input_device == CURRENTINPUTDEV_MOUSE) {
             must_update_frame_buffer = true;
         }
+        #endif
         mouse_x += new_mouse_x;
         if (mouse_x < 0) { mouse_x = 0; } else if (mouse_x >= FRAMEBUFFER_WIDTH) { mouse_x = FRAMEBUFFER_WIDTH-1; }
         mouse_y += new_mouse_y;

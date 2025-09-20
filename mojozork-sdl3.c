@@ -10,22 +10,25 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 
+#define DRAW_OWN_MOUSE_CURSOR 0
 #include "mojozork-libretro.c"   // yeah, this is nuts. This app just implements enough of a libretro host to run the libretro core, compiled inline.
+
+static const char *visual_styles[] = { "Standard", "AppleII", "MS-DOS", "Commodore-64" };  // !!! FIXME: move to the libretro core, and build out the cvar from this list, to unify things?
 
 static SDL_Window *window = NULL;
 static SDL_Renderer *renderer = NULL;
 static SDL_Texture *texture = NULL;
 static SDL_Gamepad *gamepad = NULL;
-static const char *style = "Standard";
+static const char *style = NULL;
 static bool retro_init_called = false;
 static retro_frame_time_callback_t frame_time_callback_impl = NULL;
 static retro_keyboard_event_t keyboard_event_impl = NULL;
-
+static bool game_loaded = false;
+static bool visual_style_updated = false;
 static SDL_MouseButtonFlags current_mouse_buttons;
 static int current_mouse_x, current_mouse_y;
 static int prev_mouse_x, prev_mouse_y;
 static int mouse_wheel_accumulator;
-static bool mouse_cursor_shown = true;
 //static int prev_pointer_x, prev_pointer_y;
 
 static SDL_AppResult panic(const char *title, const char *msg)
@@ -66,6 +69,11 @@ static void RETRO_CALLCONV log_entry_point(enum retro_log_level level, const cha
 static bool RETRO_CALLCONV environment_entry_point(unsigned cmd, void *data)
 {
     switch (cmd) {
+        case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE:
+            *((bool *) data) = visual_style_updated;
+            visual_style_updated = false;
+            return true;
+
         case RETRO_ENVIRONMENT_GET_LOG_INTERFACE:
             ((struct retro_log_callback *) data)->log = log_entry_point;
             return true;
@@ -176,23 +184,35 @@ static void RETRO_CALLCONV video_refresh_entry_point(const void *data, unsigned 
     }
 }
 
-static void maybe_hide_system_cursor(void)
+static void load_game(const char *gamefname)
 {
-    if (mouse_cursor_shown) {
-        SDL_HideCursor();
-        SDL_StartTextInput(window);
-        mouse_cursor_shown = false;
+    size_t gamedatalen = 0;
+    void *gamedata = SDL_LoadFile(gamefname, &gamedatalen);
+    if (!gamedata) {
+        panic("Couldn't load game file", SDL_GetError());
+        return;
     }
+
+    game_loaded = false;
+
+    if (!retro_init_called) {
+        retro_init();
+        retro_init_called = true;
+    }
+
+    struct retro_game_info gameinfo;
+    SDL_zero(gameinfo);
+    gameinfo.path = gamefname;
+    gameinfo.data = gamedata;
+    gameinfo.size = gamedatalen;
+    if (retro_load_game(&gameinfo)) {
+        game_loaded = true;
+    } else {
+        panic("Couldn't load game file", "Game data is apparently corrupt/invalid");
+    }
+    SDL_free(gamedata);
 }
 
-static void maybe_show_system_cursor(void)
-{
-    if (!mouse_cursor_shown) {
-        SDL_ShowCursor();
-        SDL_StopTextInput(window);
-        mouse_cursor_shown = true;
-    }
-}
 
 SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
 {
@@ -225,12 +245,19 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
         }
     }
 
-    if (gamefname == NULL) { return usage(); }
+    bool valid_style = false;
+    if (style) {
+        for (int i = 0; i < SDL_arraysize(visual_styles); i++) {
+            if (SDL_strcasecmp(style, visual_styles[i]) == 0) {
+                style = visual_styles[i];
+                valid_style = true;
+                break;
+            }
+        }
+    }
 
-    size_t gamedatalen = 0;
-    void *gamedata = SDL_LoadFile(gamefname, &gamedatalen);
-    if (!gamedata) {
-        return panic("Couldn't load game file", SDL_GetError());
+    if (!valid_style) {
+        style = visual_styles[0];
     }
 
     // no audio at the moment.
@@ -241,19 +268,9 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
     retro_set_video_refresh(video_refresh_entry_point);
     retro_set_environment(environment_entry_point);
 
-    retro_init_called = true;
-    retro_init();
-
-    struct retro_game_info gameinfo;
-    SDL_zero(gameinfo);
-    gameinfo.path = gamefname;
-    gameinfo.data = gamedata;
-    gameinfo.size = gamedatalen;
-    if (!retro_load_game(&gameinfo)) {
-        SDL_free(gamedata);
-        return panic("Couldn't load game file", "Game data is apparently corrupt/invalid");
+    if (gamefname) {
+        load_game(gamefname);
     }
-    SDL_free(gamedata);
 
     struct retro_system_av_info avinfo;
     SDL_zero(avinfo);
@@ -268,10 +285,26 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
         return panic("Couldn't create texture", SDL_GetError());
     }
 
-    maybe_hide_system_cursor();  // assume a keyboard until otherwise proven.
+    SDL_StartTextInput(window);  // assume a keyboard until otherwise proven.
     SDL_SetRenderLogicalPresentation(renderer, avinfo.geometry.base_width, avinfo.geometry.base_height, SDL_LOGICAL_PRESENTATION_LETTERBOX);
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
     return SDL_APP_CONTINUE;
+}
+
+static void SDLCALL open_on_main_thread(void *userdata)
+{
+    if (userdata) {
+        load_game((const char *) userdata);
+        SDL_free(userdata);
+    }
+}
+
+static void SDLCALL file_open_callback(void *userdata, const char * const *filelist, int filter)
+{
+    if (!filelist || !*filelist) {
+        return;  // cancelled or error, ignore it.
+    }
+    SDL_RunOnMainThread(open_on_main_thread, SDL_strdup(*filelist), false);
 }
 
 SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event)
@@ -279,9 +312,23 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event)
     if (event->type == SDL_EVENT_QUIT) {
         return SDL_APP_SUCCESS;  /* end the program, reporting success to the OS. */
     } else if ( ((event->type == SDL_EVENT_KEY_UP) || (event->type == SDL_EVENT_KEY_DOWN)) && keyboard_event_impl ) {
-        if (event->type == SDL_EVENT_KEY_DOWN) {
-            maybe_show_system_cursor();
+        if ((event->key.key == SDLK_F3) && event->key.down) {
+            SDL_ShowOpenFileDialog(file_open_callback, NULL, window, NULL, 0, NULL, false);
+            return SDL_APP_CONTINUE;
+        } else if ((event->key.key == SDLK_F6) && event->key.down) {
+            for (int i = 0; i < SDL_arraysize(visual_styles); i++) {
+                if (SDL_strcmp(style, visual_styles[i]) == 0) {
+                    style = visual_styles[(i + 1) % SDL_arraysize(visual_styles)];
+                    visual_style_updated = true;
+                    return SDL_APP_CONTINUE;
+                }
+            }
+            // uh...shouldn't have gotten here...?
+            style = visual_styles[0];
+            visual_style_updated = true;
+            return SDL_APP_CONTINUE;
         }
+
         // we only care about an extremely small set of keys for MojoZork, and we're not going to use text input events atm. It's 1980s input tech!
         unsigned int keycode = 0;
         switch (event->key.key) {
@@ -309,11 +356,8 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event)
         }
     } else if (event->type == SDL_EVENT_MOUSE_WHEEL) {
         if (event->wheel.integer_y) {
-            maybe_hide_system_cursor();
             mouse_wheel_accumulator += event->wheel.integer_y;
         }
-    } else if (event->type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
-        maybe_hide_system_cursor();
     } else if (event->type == SDL_EVENT_GAMEPAD_ADDED) {
         if (!gamepad) {
             gamepad = SDL_OpenGamepad(event->gdevice.which);
@@ -326,6 +370,8 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event)
             SDL_CloseGamepad(gamepad);
             gamepad = NULL;
         }
+    } else if (event->type == SDL_EVENT_DROP_FILE) {
+        load_game((const char *) event->drop.data);
     }
 
     return SDL_APP_CONTINUE;  /* carry on with the program! */
@@ -342,15 +388,24 @@ SDL_AppResult SDL_AppIterate(void *appstate)
     }
     last_iteration_ns = now_ns;
 
-    float fx, fy;
-    current_mouse_buttons = SDL_GetMouseState(&fx, &fy);
-    current_mouse_x = (int) fx;
-    current_mouse_y = (int) fy;
-
-    retro_run();
-
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
     SDL_RenderClear(renderer);
-    SDL_RenderTexture(renderer, texture, NULL, NULL);
+
+    if (game_loaded) {
+        float fx, fy;
+        current_mouse_buttons = SDL_GetMouseState(&fx, &fy);
+        current_mouse_x = (int) fx;
+        current_mouse_y = (int) fy;
+        retro_run();
+        SDL_RenderTexture(renderer, texture, NULL, NULL);
+    } else {
+        SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
+        const char *msg = "Press F3 to load a Z-Machine program. F6 to toggle visual styles.";
+        const float y = (480 - SDL_DEBUG_TEXT_FONT_CHARACTER_SIZE) / 2.0f;
+        const float x  = (640 - (SDL_strlen(msg) * SDL_DEBUG_TEXT_FONT_CHARACTER_SIZE)) / 2.0f;
+        SDL_RenderDebugText(renderer, x, y, msg);
+    }
+
     SDL_RenderPresent(renderer);
 
     return SDL_APP_CONTINUE;  /* carry on with the program! */
