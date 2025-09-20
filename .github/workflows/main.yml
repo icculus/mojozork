@@ -18,6 +18,11 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install cmake ninja-build libsqlite3-dev
+    - name: Set up SDL
+      id: sdl
+      uses: libsdl-org/setup-sdl@v1
+      with:
+        version: sdl3-latest
     - name: Get mojozork sources
       uses: actions/checkout@v2
     - name: Configure CMake
