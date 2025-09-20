@@ -19,6 +19,7 @@ static SDL_Window *window = NULL;
 static SDL_Renderer *renderer = NULL;
 static SDL_Texture *texture = NULL;
 static SDL_Gamepad *gamepad = NULL;
+static float dpimult = 1.0f;
 static const char *style = NULL;
 static bool retro_init_called = false;
 static retro_frame_time_callback_t frame_time_callback_impl = NULL;
@@ -276,7 +277,8 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
     SDL_zero(avinfo);
     retro_get_system_av_info(&avinfo);
 
-    if (!SDL_CreateWindowAndRenderer("MojoZork", avinfo.geometry.base_width, avinfo.geometry.base_height, SDL_WINDOW_RESIZABLE, &window, &renderer)) {
+    dpimult = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
+    if (!SDL_CreateWindowAndRenderer("MojoZork", (int) (avinfo.geometry.base_width * dpimult), (int) (avinfo.geometry.base_height * dpimult), SDL_WINDOW_RESIZABLE, &window, &renderer)) {
         return panic("Couldn't create window/renderer", SDL_GetError());
     }
 
@@ -372,6 +374,16 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event)
         }
     } else if (event->type == SDL_EVENT_DROP_FILE) {
         load_game((const char *) event->drop.data);
+    } else if (event->type == SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED) {
+        const float newdpimult = SDL_GetWindowDisplayScale(window);
+        if (newdpimult != dpimult) {
+            int w, h;
+            SDL_GetWindowSizeInPixels(window, &w, &h);
+            w = (int) ((((float) w) / dpimult) * newdpimult);
+            h = (int) ((((float) h) / dpimult) * newdpimult);
+            dpimult = newdpimult;
+            SDL_SetWindowSize(window, w, h);
+        }
     }
 
     return SDL_APP_CONTINUE;  /* carry on with the program! */
