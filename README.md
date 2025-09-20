@@ -65,6 +65,12 @@ core handles all the tapdancing to make text-based games run in a graphical
 window, and can be played with a keyboard (in RetroArch focus mode), or with
 a mouse or game controller on an included virtual keyboard.
 
+# Standalone SDL3 app
+
+Want the graphical interface of the libretro core without RetroArch? There's a
+standalone app that uses SDL3 for the graphics. It's a no-frills sort of
+thing, but it could be useful in the right circumstances.
+
 
 Enjoy!
 
