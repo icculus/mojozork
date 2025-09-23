@@ -412,9 +412,17 @@ SDL_AppResult SDL_AppIterate(void *appstate)
         SDL_RenderTexture(renderer, texture, NULL, NULL);
     } else {
         SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
-        const char *msg = "Press F3 to load a Z-Machine program. F6 to toggle visual styles.";
-        const float y = (480 - SDL_DEBUG_TEXT_FONT_CHARACTER_SIZE) / 2.0f;
-        const float x  = (640 - (SDL_strlen(msg) * SDL_DEBUG_TEXT_FONT_CHARACTER_SIZE)) / 2.0f;
+        #ifdef SDL_PLATFORM_EMSCRIPTEN
+        const char *msg = "Drag/drop a file to load a Z-Machine program.";
+        #else
+        const char *msg = "Press F3 (or drag/drop) to load a Z-Machine program.";
+        #endif
+        float y = (480 - (SDL_DEBUG_TEXT_FONT_CHARACTER_SIZE * 3)) / 2.0f;
+        float x  = (640 - (SDL_strlen(msg) * SDL_DEBUG_TEXT_FONT_CHARACTER_SIZE)) / 2.0f;
+        SDL_RenderDebugText(renderer, x, y, msg);
+        msg = "Switch between visual styles during the game by pressing F6.";
+        y += (SDL_DEBUG_TEXT_FONT_CHARACTER_SIZE * 2);
+        x  = (640 - (SDL_strlen(msg) * SDL_DEBUG_TEXT_FONT_CHARACTER_SIZE)) / 2.0f;
         SDL_RenderDebugText(renderer, x, y, msg);
     }
 
