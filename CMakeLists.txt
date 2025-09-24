@@ -76,7 +76,7 @@ if(MOJOZORK_SDL3)
     set_target_properties(mojozork_sdl3 PROPERTIES WIN32_EXECUTABLE TRUE)  # safe to set this on non-Windows platforms, too.
     target_link_libraries(mojozork_sdl3 SDL3::SDL3)
     if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
-        set_target_properties(mojozork_sdl3 PROPERTIES LINK_FLAGS "-s WASM=1 -s ALLOW_MEMORY_GROWTH=1 -s ASSERTIONS=0")
+        set_target_properties(mojozork_sdl3 PROPERTIES LINK_FLAGS "-s WASM=1 -s ALLOW_MEMORY_GROWTH=1 -s ASSERTIONS=0 -lidbfs.js")
     endif()
 endif()
 

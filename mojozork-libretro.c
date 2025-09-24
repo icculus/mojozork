@@ -129,6 +129,11 @@ static uint8_t status_bar_highlight[MAX_TERMINAL_WIDTH + 1];
 static char upper_window[MAX_TERMINAL_HEIGHT * MAX_TERMINAL_WIDTH];
 static int32_t upper_window_cursor_position = 0;
 static bool frontend_supports_frame_dupe = false;
+static char *game_filename_base = NULL;
+static const char *savedir = NULL;
+static char *savegame_filename = NULL;
+static int waiting_for_savegame_filename = 0;
+static bool save_game_written = false;
 
 static const VirtualKeyboardKey virtual_keyboard_keys[5][11] = {
     {
@@ -379,6 +384,10 @@ void retro_set_environment(retro_environment_t cb)
 
     frontend_supports_frame_dupe = false;
     cb(RETRO_ENVIRONMENT_GET_CAN_DUPE, &frontend_supports_frame_dupe);
+
+    if (!cb(RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY, &savedir)) {
+        savedir = NULL;
+    }
 
     static const struct retro_variable cvars[] = {
         { "style", "Visual style to use for gameplay; Standard|AppleII|MS-DOS|Commodore-64" },
@@ -1171,8 +1180,118 @@ static int update_input(void)  // returns non-zero if the screen changed.
             lastnonspace[1] = '\0';
         }
 
-        // special case input for interpreter, not the game.
-        if (strncmp((const char *) next_inputbuf, "#random ", 8) == 0) {
+        // special case input for interpreter, not the game...
+
+        // we catch save commands here, so we can choose a filename outside of the z-machine;
+        //  once opcode_save fires, we can't return without an answer, but we can't block
+        //  there waiting on input from the user, either. We'll send the actual save command
+        //  to the z-machine after we've negotiated with the user.
+
+        if (waiting_for_savegame_filename == 1) {  // user just entered filename for save
+            waiting_for_savegame_filename = 0;
+
+            assert(savedir != NULL);
+            if (*next_inputbuf) {
+                char *newfname = strdup((const char *) next_inputbuf);
+                if (!newfname) {
+                    writestr("\n\n*** OUT OF MEMORY, CAN'T SAVE RIGHT NOW ***\n");
+                    next_inputbuf_pos = 0;  // go again.
+                    input_ready = false;
+                    waiting_for_savegame_filename = 0;
+                    return 1;
+                }
+
+                free(savegame_filename);
+                savegame_filename = newfname;
+            }
+
+            const size_t slen = strlen(savedir) + strlen(savegame_filename) + 2;
+            char *fullpath = (char *) malloc(slen);
+            if (!fullpath) {
+                writestr("\n\n*** OUT OF MEMORY, CAN'T SAVE RIGHT NOW ***\n");
+                next_inputbuf_pos = 0;  // go again.
+                input_ready = false;
+                waiting_for_savegame_filename = 0;
+                return 1;
+            }
+
+            snprintf(fullpath, slen, "%s/%s", savedir, savegame_filename);
+            FILE *io = fopen(fullpath, "rb");
+            free(fullpath);
+
+            if (io) {
+                fclose(io);
+                writestr("Overwrite existing file? ");
+                next_inputbuf_pos = 0;  // go again.
+                input_ready = false;
+                waiting_for_savegame_filename = 2;
+                return 1;
+            } else {  // run the save command now that we have a filename.
+                assert(next_inputbuflen > 4);
+                snprintf((char *) next_inputbuf, next_inputbuflen, "save");
+                next_inputbuf_pos = 4;
+            }
+        } else if (waiting_for_savegame_filename == 2) {  // confirm overwrite
+            waiting_for_savegame_filename = 0;
+            if ((*next_inputbuf == 'y') || (*next_inputbuf == 'Y')) {  // run the save command now that overwrite is approved.
+                assert(next_inputbuflen > 4);
+                snprintf((char *) next_inputbuf, next_inputbuflen, "save");
+                next_inputbuf_pos = 4;
+            } else {
+                writestr("Save cancelled.\n\n>");
+                next_inputbuf_pos = 0;  // go again.
+                input_ready = false;
+                return 1;
+            }
+        } else if (waiting_for_savegame_filename == -1) {  // user just entered filename for restore
+            waiting_for_savegame_filename = 0;
+
+            assert(savedir != NULL);
+            if (*next_inputbuf) {
+                char *newfname = strdup((const char *) next_inputbuf);
+                if (!newfname) {
+                    writestr("\n\n*** OUT OF MEMORY, CAN'T SAVE RIGHT NOW ***\n");
+                    next_inputbuf_pos = 0;  // go again.
+                    input_ready = false;
+                    waiting_for_savegame_filename = 0;
+                    return 1;
+                }
+
+                free(savegame_filename);
+                savegame_filename = newfname;
+            }
+
+            // run the restore command now that we have a filename.
+            assert(next_inputbuflen > 7);
+            snprintf((char *) next_inputbuf, next_inputbuflen, "restore");
+            next_inputbuf_pos = 7;
+        } else if (strcmp((const char *) next_inputbuf, "save") == 0) {
+            if (savedir == NULL) {
+                writestr("The libretro host didn't offer a save directory. Try a RetroArch save state instead?\n");
+                next_inputbuf_pos = 0;  // go again.
+                input_ready = false;
+                return 1;
+            }
+            writestr("Enter a file name.\n");
+            writestr("Default is \""); writestr(savegame_filename); writestr("\": ");
+            next_inputbuf_pos = 0;  // go again.
+            input_ready = false;
+            waiting_for_savegame_filename = 1;
+            return 1;
+        } else if (strcmp((const char *) next_inputbuf, "restore") == 0) {
+            if (savedir == NULL) {
+                writestr("The libretro host didn't offer a save directory. Try a RetroArch save state instead?\n");
+                next_inputbuf_pos = 0;  // go again.
+                input_ready = false;
+                return 1;
+            }
+            writestr("Enter a file name.\n");
+            writestr("Default is \""); writestr(savegame_filename); writestr("\": ");
+            next_inputbuf_pos = 0;  // go again.
+            input_ready = false;
+            waiting_for_savegame_filename = -1;
+            return 1;
+        } else if (strncmp((const char *) next_inputbuf, "#random ", 8) == 0) {
             const uint16 val = doRandom((sint16) atoi((const char *) (next_inputbuf+8)));
             char msg[128];
             snprintf(msg, sizeof (msg), "*** random replied: %u\n>", (unsigned int) val);
@@ -1365,16 +1484,95 @@ static void die_mojozork_libretro(const char *fmt, ...)
     longjmp(jmpbuf, 1);
 }
 
+// !!! FIXME: GState should just have a savedir and filename, and do this work without having to implementing this elsewhere.
 static void opcode_save_mojozork_libretro(void)
 {
-    writestr("Just use RetroArch save states, please.\n");
-    doBranch(0);
+    // should have caught these in the input loop.
+    assert(savedir != NULL);
+    assert(savegame_filename != NULL);
+
+    const size_t slen = strlen(savedir) + strlen(savegame_filename) + 2;
+    char *fullpath = (char *) malloc(slen);
+    if (!fullpath) {
+        writestr("\n\n*** OUT OF MEMORY, CAN'T SAVE RIGHT NOW ***\n");
+        doBranch(0);
+        return;
+    }
+
+    snprintf(fullpath, slen, "%s/%s", savedir, savegame_filename);
+
+    FIXME("this should write Quetzal format; this is temporary.");
+
+    const uint32 addr = (uint32) (GState->pc-GState->story);
+    const uint32 sp = (uint32) (GState->sp-GState->stack);
+    FILE *io = fopen(fullpath, "wb");
+    free(fullpath);
+    int okay = 1;
+    okay &= io != NULL;
+    okay &= fwrite(GState->story, GState->header.staticmem_addr, 1, io) == 1;
+    okay &= fwrite(&addr, sizeof (addr), 1, io) == 1;
+    okay &= fwrite(&sp, sizeof (sp), 1, io) == 1;
+    okay &= fwrite(GState->stack, sizeof (GState->stack), 1, io) == 1;
+    okay &= fwrite(&GState->bp, sizeof (GState->bp), 1, io) == 1;
+    if (io) {
+        fclose(io);
+    }
+
+    save_game_written = true;
+
+    doBranch(okay ? 1 : 0);
 }
 
+// !!! FIXME: GState should just have a savedir and filename, and do this work without having to implementing this elsewhere.
 static void opcode_restore_mojozork_libretro(void)
 {
-    writestr("Just use RetroArch save states, please.\n");
-    doBranch(0);
+    // should have caught these in the input loop.
+    assert(savedir != NULL);
+    assert(savegame_filename != NULL);
+
+    const size_t slen = strlen(savedir) + strlen(savegame_filename) + 2;
+    char *fullpath = (char *) malloc(slen);
+    if (!fullpath) {
+        writestr("\n\n*** OUT OF MEMORY, CAN'T RESTORE RIGHT NOW ***\n");
+        doBranch(0);
+        return;
+    }
+
+    snprintf(fullpath, slen, "%s/%s", savedir, savegame_filename);
+
+    FIXME("this should read Quetzal format; this is temporary.");
+    FILE *io = fopen(fullpath, "rb");
+    free(fullpath);
+
+    int okay = 1;
+    uint32 x = 0;
+
+    okay &= io != NULL;
+    okay &= fread(GState->story, GState->header.staticmem_addr, 1, io) == 1;
+    okay &= fread(&x, sizeof (x), 1, io) == 1;
+    GState->logical_pc = x;
+    GState->pc = GState->story + x;
+    okay &= fread(&x, sizeof (x), 1, io) == 1;
+    GState->sp = GState->stack + x;
+    okay &= fread(GState->stack, sizeof (GState->stack), 1, io) == 1;
+    okay &= fread(&GState->bp, sizeof (GState->bp), 1, io) == 1;
+    if (io) {
+        fclose(io);
+    }
+
+    if (!okay) {
+        GState->die("Failed to restore.");   // !!! FIXME: does this _have_ to die, or could we recover from i/o errors by not overwriting statue until we read all data?
+    }
+
+    // 8.6.1.3: Following a "restore" of the game, the interpreter should automatically collapse the upper window to size 0.
+    if (okay && GState->split_window)
+    {
+        const uint16 oldval = GState->upper_window_line_count;
+        GState->upper_window_line_count = 0;
+        GState->split_window(oldval, 0);
+    } // if
+
+    doBranch(okay ? 1 : 0);
 }
 
 static void restart_game(void);
@@ -1525,6 +1723,46 @@ bool retro_load_game(const struct retro_game_info *info)
         return false;
     }
 
+    game_filename_base = strdup(info->path ? info->path : "zmachine");
+    if (!game_filename_base) {
+        log_cb(RETRO_LOG_INFO, "out of memory!\n");
+        free(original_story);
+        original_story = NULL;
+        original_story_len = 0;
+        return false;
+    }
+
+    char *ptr = strrchr(game_filename_base, '/');
+    char *ptr2 = strrchr(ptr ? ptr : game_filename_base, '\\');
+    if (ptr2) {
+        ptr = ptr2;
+    }
+    if (ptr) {  // kill the directories.
+        memmove(game_filename_base, ptr + 1, strlen(ptr));  // this will move the null terminator, too.
+    }
+    ptr = strrchr(game_filename_base, '.');
+    if (ptr) {
+        *ptr = '\0';  // kill the filename extension.
+    }
+
+    if (strlen(game_filename_base) > 64) {
+        game_filename_base[64] = '\0';
+    }
+
+    const size_t slen = strlen(game_filename_base) + 5;
+    savegame_filename = (char *) malloc(slen);
+    if (!savegame_filename) {
+        log_cb(RETRO_LOG_INFO, "out of memory!\n");
+        free(game_filename_base);
+        game_filename_base = NULL;
+        free(original_story);
+        original_story = NULL;
+        original_story_len = 0;
+        return false;
+    }
+
+    snprintf(savegame_filename, slen, "%s.mjz", game_filename_base);  // !!! FIXME: mjz for now, until we support Quetzal format.
+
     explain_controls();
 
     memcpy(original_story, info->data, original_story_len);
@@ -1543,6 +1781,14 @@ void retro_unload_game(void)
     free(original_story);
     original_story = NULL;
     original_story_len = 0;
+
+    free(game_filename_base);
+    game_filename_base = NULL;
+
+    free(savegame_filename);
+    savegame_filename = NULL;
+
+    waiting_for_savegame_filename = 0;
 }
 
 void retro_reset(void)

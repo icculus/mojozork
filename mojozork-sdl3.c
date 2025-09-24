@@ -10,6 +10,10 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 
+#ifdef SDL_PLATFORM_EMSCRIPTEN
+#include <emscripten.h>
+#endif
+
 #define DRAW_OWN_MOUSE_CURSOR 0
 #include "mojozork-libretro.c"   // yeah, this is nuts. This app just implements enough of a libretro host to run the libretro core, compiled inline.
 
@@ -19,6 +23,7 @@ static SDL_Window *window = NULL;
 static SDL_Renderer *renderer = NULL;
 static SDL_Texture *texture = NULL;
 static SDL_Gamepad *gamepad = NULL;
+static char *prefpath = NULL;
 static float dpimult = 1.0f;
 static const char *style = NULL;
 static bool retro_init_called = false;
@@ -30,7 +35,6 @@ static SDL_MouseButtonFlags current_mouse_buttons;
 static int current_mouse_x, current_mouse_y;
 static int prev_mouse_x, prev_mouse_y;
 static int mouse_wheel_accumulator;
-//static int prev_pointer_x, prev_pointer_y;
 
 static SDL_AppResult panic(const char *title, const char *msg)
 {
@@ -111,6 +115,11 @@ static bool RETRO_CALLCONV environment_entry_point(unsigned cmd, void *data)
         case RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK:
             keyboard_event_impl = ((struct retro_keyboard_callback *) data)->callback;
             return true;
+
+        case RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY:
+            *((const char **) data) = prefpath;
+            return true;
+
     }
     return false;
 }
@@ -261,6 +270,20 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
         style = visual_styles[0];
     }
 
+    prefpath = SDL_GetPrefPath("icculus.org", "MojoZork");
+
+    #ifdef SDL_PLATFORM_EMSCRIPTEN
+    MAIN_THREAD_EM_ASM({
+        var persistent_path = UTF8ToString($0);
+        FS.mount(IDBFS, {}, persistent_path);
+        FS.syncfs(true, function(err) {
+            if (err) {
+                console.log("WARNING: Failed to populate persistent store. Save games likely lost?");
+            }
+        });
+    }, prefpath);
+    #endif
+
     // no audio at the moment.
     //retro_set_audio_sample(retro_audio_sample_t cb) { audio_cb = cb; }
     //retro_set_audio_sample_batch(retro_audio_sample_batch_t cb) { audio_batch_cb = cb; }
@@ -410,6 +433,20 @@ SDL_AppResult SDL_AppIterate(void *appstate)
         current_mouse_y = (int) fy;
         retro_run();
         SDL_RenderTexture(renderer, texture, NULL, NULL);
+
+        if (save_game_written) {  // this is kinda a hack, breaking the libretro core code separation. Maybe provide a VFS?
+            save_game_written = false;
+            #ifdef SDL_PLATFORM_EMSCRIPTEN
+            MAIN_THREAD_EM_ASM({
+                FS.syncfs(false, function (err) {
+                    if (err) {
+                        console.log("Uhoh, couldn't commit persistent data to write dir!");
+                        console.log("Save games, etc, MIGHT BE LOST!");
+                    }
+                });
+            });
+            #endif
+        }
     } else {
         SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
         #ifdef SDL_PLATFORM_EMSCRIPTEN
@@ -438,6 +475,7 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result)
     }
     SDL_CloseGamepad(gamepad);
     SDL_DestroyTexture(texture);
+    SDL_free(prefpath);
 }
 
 // end of mojozork-sdl.c ...
