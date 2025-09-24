@@ -1494,6 +1494,7 @@ static void opcode_save(void)
     FILE *io = fopen("save.dat", "wb");
     int okay = 1;
     okay &= io != NULL;
+    okay &= fwrite("MOJOZORK0\n", 10, 1, io) == 1;
     okay &= fwrite(GState->story, GState->header.staticmem_addr, 1, io) == 1;
     okay &= fwrite(&addr, sizeof (addr), 1, io) == 1;
     okay &= fwrite(&sp, sizeof (sp), 1, io) == 1;
@@ -1512,6 +1513,13 @@ static void opcode_restore(void)
     uint32 x = 0;
 
     okay &= io != NULL;
+
+    char header[10];
+    okay &= io != NULL;
+    okay &= fread(header, 10, 1, io) == 1;
+    if (okay && (memcmp(header, "MOJOZORK0\n", 10) != 0)) {
+        rewind(io);  // might be an older MojoZork savegame with no identifier...?
+    }
     okay &= fread(GState->story, GState->header.staticmem_addr, 1, io) == 1;
     okay &= fread(&x, sizeof (x), 1, io) == 1;
     GState->logical_pc = x;
