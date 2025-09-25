@@ -71,6 +71,14 @@ Want the graphical interface of the libretro core without RetroArch? There's a
 standalone app that uses SDL3 for the graphics. It's a no-frills sort of
 thing, but it could be useful in the right circumstances.
 
+# Play it on the web!
+
+The standalone SDL3 app has been compiled with Emscripten and made available
+to the public. Just head [here](https://icculus.org/mojozork/in-browser/) and
+drag and drop a Z-machine program,
+[like this one](https://github.com/icculus/mojozork/raw/refs/heads/main/zork1.dat),
+onto the game window to start playing!
+
 
 Enjoy!
 
