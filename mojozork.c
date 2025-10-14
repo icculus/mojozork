@@ -95,6 +95,7 @@ typedef struct ZMachineState
     const uint8 *pc;  // program counter
     uint16 *sp;  // stack pointer
     uint16 bp;  // base pointer
+    uint16 calculated_checksum;
     int quit;
     int step_completed;  // possibly time to break out of the Z-Machine simulation loop.
     uint16 stack[2048];  // !!! FIXME: make this dynamic?
@@ -1448,14 +1449,7 @@ static void opcode_read(void)
 
 static void opcode_verify(void)
 {
-    const uint32 total = GState->header.story_len;
-    uint32 checksum = 0;
-    uint32 i;
-
-    for (i = 0x40; i < total; i++)
-        checksum += GState->story[i];
-
-    doBranch((((uint16) (checksum % 0x10000)) == GState->header.story_checksum) ? 1 : 0);
+    doBranch((GState->calculated_checksum == GState->header.story_checksum) ? 1 : 0);
 } // opcode_verify
 
 static void opcode_split_window(void)
@@ -2017,6 +2011,28 @@ static void initOpcodeTable(void)
         opcodes[i] = opcodes[i % 32];
 } // initOpcodeTable
 
+// call this before we make any changes to GState->story.
+static void calculateActualChecksum(void)
+{
+    uint32 total = GState->header.story_len;
+    uint16 checksum = 0;
+
+    // 11.1.6: The file length stored at $1a is actually divided by a constant, depending on the Version, to make it fit into a header word. This constant is 2 for Versions 1 to 3, 4 for Versions 4 to 5 or 8 for Versions 6 and later.
+    if (GState->header.version <= 3) {
+        total *= 2;
+    } else if (GState->header.version <= 5) {
+        total *= 4;
+    } else {
+        total *= 8;
+    }
+
+    const uint8 *ptr = GState->story;
+    for (uint32 i = 0x40; i < total; i++) {
+        checksum += ptr[i];
+    }
+
+    GState->calculated_checksum = checksum;
+}
 
 // WE OWN THIS copy of story, which we will free() later. Caller should not free it!
 static void initStory(const char *fname, uint8 *story, const uint32 storylen)
@@ -2108,6 +2124,7 @@ static void initStory(const char *fname, uint8 *story, const uint32 storylen)
     if (GState->header.version != 3)
         GState->die("FIXME: only version 3 is supported right now, this is %d", (int) GState->header.version);
 
+    calculateActualChecksum();
     initAlphabetTable();
     initOpcodeTable();
 
