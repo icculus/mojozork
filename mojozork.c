@@ -156,11 +156,13 @@ static uint8 *unpackAddress(const uint32 addr)
     return NULL;
 } // unpackAddress
 
-static uint8 *varAddress(const uint8 var, const int writing)
+static uint8 *varAddress(const uint8 var, const int writing, const int indirect)
 {
     if (var == 0) // top of stack
     {
-        if (writing)
+        if (indirect)
+            return (uint8 *) (writing ? GState->sp : GState->sp - 1);  // "6.3.4: In the seven opcodes that take indirect variable references (inc, dec, inc_chk, dec_chk, load, store, pull), an indirect reference to the stack pointer does not push or pull the top item of the stack - it is read or written in place."
+        else if (writing)
         {
             if ((GState->sp-GState->stack) >= (sizeof (GState->stack) / sizeof (GState->stack[0])))
                 GState->die("Stack overflow");
@@ -201,7 +203,7 @@ static void opcode_call(void)
     // no idea if args==0 should be the same as calling addr 0...
     if ((args == 0) || (operands[0] == 0))  // legal no-op; store 0 to return value and bounce.
     {
-        uint8 *store = varAddress(storeid, 1);
+        uint8 *store = varAddress(storeid, 1, 0);
         WRITEUI16(store, 0);
     } // if
     else
@@ -275,7 +277,7 @@ static void doReturn(const uint16 val)
     const uint8 storeid = (uint8) *(--GState->sp);  // pop the result storage location.
 
     dbg("returning: new pc=%X, bp=%u, sp=%u\n", (unsigned int) (GState->pc-GState->story), (unsigned int) GState->bp, (unsigned int) (GState->sp-GState->stack));
-    uint8 *store = varAddress(storeid, 1);  // and store the routine result.
+    uint8 *store = varAddress(storeid, 1, 0);  // and store the routine result.
     WRITEUI16(store, val);
 } // doReturn
 
@@ -296,28 +298,28 @@ static void opcode_rfalse(void)
 
 static void opcode_ret_popped(void)
 {
-    uint8 *ptr = varAddress(0, 0);   // top of stack.
+    uint8 *ptr = varAddress(0, 0, 0);   // top of stack.
     const uint16 result = READUI16(ptr);
     doReturn(result);
 } // opcode_ret_popped
 
 static void opcode_push(void)
 {
-    uint8 *store = varAddress(0, 1);   // top of stack.
+    uint8 *store = varAddress(0, 1, 0);   // top of stack.
     WRITEUI16(store, GState->operands[0]);
 } // opcode_push
 
 static void opcode_pull(void)
 {
-    const uint8 *ptr = varAddress(0, 0);   // top of stack.
+    const uint8 *ptr = varAddress(0, 0, 0);   // top of stack.
     const uint16 val = READUI16(ptr);
-    uint8 *store = varAddress((uint8) GState->operands[0], 1);
+    uint8 *store = varAddress((uint8) GState->operands[0], 1, 1);
     WRITEUI16(store, val);
 } // opcode_pull
 
 static void opcode_pop(void)
 {
-    varAddress(0, 0);   // this causes a pop.
+    varAddress(0, 0, 0);   // this causes a pop.
 } // opcode_pop
 
 static void updateStatusBar(void);
@@ -329,14 +331,14 @@ static void opcode_show_status(void)
 
 static void opcode_add(void)
 {
-    uint8 *store = varAddress(*(GState->pc++), 1);
+    uint8 *store = varAddress(*(GState->pc++), 1, 0);
     const sint16 result = ((sint16) GState->operands[0]) + ((sint16) GState->operands[1]);
     WRITEUI16(store, result);
 } // opcode_add
 
 static void opcode_sub(void)
 {
-    uint8 *store = varAddress(*(GState->pc++), 1);
+    uint8 *store = varAddress(*(GState->pc++), 1, 0);
     const sint16 result = ((sint16) GState->operands[0]) - ((sint16) GState->operands[1]);
     WRITEUI16(store, result);
 } // opcode_sub
@@ -413,7 +415,7 @@ static void opcode_jump(void)
 
 static void opcode_div(void)
 {
-    uint8 *store = varAddress(*(GState->pc++), 1);
+    uint8 *store = varAddress(*(GState->pc++), 1, 0);
     if (GState->operands[1] == 0)
         GState->die("Division by zero");
     const uint16 result = (uint16) (((sint16) GState->operands[0]) / ((sint16) GState->operands[1]));
@@ -422,7 +424,7 @@ static void opcode_div(void)
 
 static void opcode_mod(void)
 {
-    uint8 *store = varAddress(*(GState->pc++), 1);
+    uint8 *store = varAddress(*(GState->pc++), 1, 0);
     if (GState->operands[1] == 0)
         GState->die("Division by zero");
     const uint16 result = (uint16) (((sint16) GState->operands[0]) % ((sint16) GState->operands[1]));
@@ -431,35 +433,35 @@ static void opcode_mod(void)
 
 static void opcode_mul(void)
 {
-    uint8 *store = varAddress(*(GState->pc++), 1);
+    uint8 *store = varAddress(*(GState->pc++), 1, 0);
     const uint16 result = (uint16) (((sint16) GState->operands[0]) * ((sint16) GState->operands[1]));
     WRITEUI16(store, result);
 } // opcode_mul
 
 static void opcode_or(void)
 {
-    uint8 *store = varAddress(*(GState->pc++), 1);
+    uint8 *store = varAddress(*(GState->pc++), 1, 0);
     const uint16 result = (GState->operands[0] | GState->operands[1]);
     WRITEUI16(store, result);
 } // opcode_or
 
 static void opcode_and(void)
 {
-    uint8 *store = varAddress(*(GState->pc++), 1);
+    uint8 *store = varAddress(*(GState->pc++), 1, 0);
     const uint16 result = (GState->operands[0] & GState->operands[1]);
     WRITEUI16(store, result);
 } // opcode_and
 
 static void opcode_not(void)
 {
-    uint8 *store = varAddress(*(GState->pc++), 1);
+    uint8 *store = varAddress(*(GState->pc++), 1, 0);
     const uint16 result = ~GState->operands[0];
     WRITEUI16(store, result);
 } // opcode_not
 
 static void opcode_inc_chk(void)
 {
-    uint8 *store = varAddress((uint8) GState->operands[0], 1);
+    uint8 *store = varAddress((uint8) GState->operands[0], 0, 1);
     sint16 val = READUI16(store);
     store -= sizeof (uint16);
     val++;
@@ -469,7 +471,7 @@ static void opcode_inc_chk(void)
 
 static void opcode_inc(void)
 {
-    uint8 *store = varAddress((uint8) GState->operands[0], 1);
+    uint8 *store = varAddress((uint8) GState->operands[0], 0, 1);
     sint16 val = (sint16) READUI16(store);
     store -= sizeof (uint16);
     val++;
@@ -478,7 +480,7 @@ static void opcode_inc(void)
 
 static void opcode_dec_chk(void)
 {
-    uint8 *store = varAddress((uint8) GState->operands[0], 1);
+    uint8 *store = varAddress((uint8) GState->operands[0], 0, 1);
     sint16 val = (sint16) READUI16(store);
     store -= sizeof (uint16);
     val--;
@@ -488,7 +490,7 @@ static void opcode_dec_chk(void)
 
 static void opcode_dec(void)
 {
-    uint8 *store = varAddress((uint8) GState->operands[0], 1);
+    uint8 *store = varAddress((uint8) GState->operands[0], 0, 1);
     sint16 val = (sint16) READUI16(store);
     store -= sizeof (uint16);
     val--;
@@ -497,15 +499,15 @@ static void opcode_dec(void)
 
 static void opcode_load(void)
 {
-    const uint8 *valptr = varAddress((uint8) (GState->operands[0] & 0xFF), 0);
+    const uint8 *valptr = varAddress((uint8) (GState->operands[0] & 0xFF), 0, 1);
     const uint16 val = READUI16(valptr);
-    uint8 *store = varAddress(*(GState->pc++), 1);
+    uint8 *store = varAddress(*(GState->pc++), 1, 0);
     WRITEUI16(store, val);
 } // opcode_load
 
 static void opcode_loadw(void)
 {
-    uint16 *store = (uint16 *) varAddress(*(GState->pc++), 1);
+    uint16 *store = (uint16 *) varAddress(*(GState->pc++), 1, 0);
     FIXME("can only read from dynamic or static memory (not highmem).");
     FIXME("how does overflow work here? Do these wrap around?");
     const uint16 offset = (GState->operands[0] + (GState->operands[1] * 2));
@@ -515,7 +517,7 @@ static void opcode_loadw(void)
 
 static void opcode_loadb(void)
 {
-    uint8 *store = varAddress(*(GState->pc++), 1);
+    uint8 *store = varAddress(*(GState->pc++), 1, 0);
     FIXME("can only read from dynamic or static memory (not highmem).");
     FIXME("how does overflow work here? Do these wrap around?");
     const uint16 offset = (GState->operands[0] + GState->operands[1]);
@@ -546,7 +548,7 @@ static void opcode_storeb(void)
 
 static void opcode_store(void)
 {
-    uint8 *store = varAddress((uint8) (GState->operands[0] & 0xFF), 1);
+    uint8 *store = varAddress((uint8) (GState->operands[0] & 0xFF), 1, 1);
     const uint16 src = GState->operands[1];
     WRITEUI16(store, src);
 } // opcode_store
@@ -785,7 +787,7 @@ static uint16 getDefaultObjectProperty(const uint16 propid)
 
 static void opcode_get_prop(void)
 {
-    uint8 *store = varAddress(*(GState->pc++), 1);
+    uint8 *store = varAddress(*(GState->pc++), 1, 0);
     const uint16 objid = GState->operands[0];
     const uint16 propid = GState->operands[1];
     uint16 result = 0;
@@ -806,7 +808,7 @@ static void opcode_get_prop(void)
 
 static void opcode_get_prop_addr(void)
 {
-    uint8 *store = varAddress(*(GState->pc++), 1);
+    uint8 *store = varAddress(*(GState->pc++), 1, 0);
     const uint16 objid = GState->operands[0];
     const uint16 propid = GState->operands[1];
     uint8 *ptr = getObjectProperty(objid, propid, NULL);
@@ -816,7 +818,7 @@ static void opcode_get_prop_addr(void)
 
 static void opcode_get_prop_len(void)
 {
-    uint8 *store = varAddress(*(GState->pc++), 1);
+    uint8 *store = varAddress(*(GState->pc++), 1, 0);
     uint16 result;
 
     if (GState->operands[0] == 0)
@@ -838,7 +840,7 @@ static void opcode_get_prop_len(void)
 
 static void opcode_get_next_prop(void)
 {
-    uint8 *store = varAddress(*(GState->pc++), 1);
+    uint8 *store = varAddress(*(GState->pc++), 1, 0);
     const uint16 objid = GState->operands[0];
     const int firstProp = (GState->operands[1] == 0);
     uint16 result = 0;
@@ -884,14 +886,14 @@ static uint16 getObjectRelationship(const uint16 objid, const uint8 relationship
 
 static void opcode_get_parent(void)
 {
-    uint8 *store = varAddress(*(GState->pc++), 1);
+    uint8 *store = varAddress(*(GState->pc++), 1, 0);
     const uint16 result = getObjectRelationship(GState->operands[0], 4);
     WRITEUI16(store, result);
 } // opcode_get_parent
 
 static void opcode_get_sibling(void)
 {
-    uint8 *store = varAddress(*(GState->pc++), 1);
+    uint8 *store = varAddress(*(GState->pc++), 1, 0);
     const uint16 result = getObjectRelationship(GState->operands[0], 5);
     WRITEUI16(store, result);
     doBranch((result != 0) ? 1: 0);
@@ -899,7 +901,7 @@ static void opcode_get_sibling(void)
 
 static void opcode_get_child(void)
 {
-    uint8 *store = varAddress(*(GState->pc++), 1);
+    uint8 *store = varAddress(*(GState->pc++), 1, 0);
     const uint16 result = getObjectRelationship(GState->operands[0], 6);
     WRITEUI16(store, result);
     doBranch((result != 0) ? 1: 0);
@@ -1163,7 +1165,7 @@ static uint16 doRandom(const sint16 range)
 
 static void opcode_random(void)
 {
-    uint8 *store = varAddress(*(GState->pc++), 1);
+    uint8 *store = varAddress(*(GState->pc++), 1, 0);
     const sint16 range = (sint16) GState->operands[0];
     const uint16 result = doRandom(range);
     WRITEUI16(store, result);
@@ -1564,7 +1566,7 @@ static int parseOperand(const uint8 optype, uint16 *operand)
         case 0: *operand = (uint16) READUI16(GState->pc); return 1;  // large constant (uint16)
         case 1: *operand = *(GState->pc++); return 1;  // small constant (uint8)
         case 2: { // variable
-            const uint8 *addr = varAddress(*(GState->pc++), 0);
+            const uint8 *addr = varAddress(*(GState->pc++), 0, 0);
             *operand = READUI16(addr);
             return 1;
         }
@@ -1595,7 +1597,7 @@ static void calculateStatusBar(char *buf, uint8 *highlight, size_t buflen)
 {
     // if not a score game, then it's a time game.
     const int score_game = (GState->header.version < 3) || ((GState->header.flags1 & (1<<1)) == 0);
-    const uint8 *addr = varAddress(0x10, 0);
+    const uint8 *addr = varAddress(0x10, 0, 0);
     const uint16 objid = READUI16(addr);
     const uint16 scoreval = READUI16(addr);
     const uint16 movesval = READUI16(addr);

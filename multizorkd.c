@@ -1131,7 +1131,7 @@ static void writestr_multizork(const char *str, const uintptr slen)
 static void opcode_get_prop_addr_multizork(void)
 {
     Instance *inst = (Instance *) GState;  // this works because zmachine_state is the first field in Instance.
-    uint8 *store = varAddress(*(GState->pc++), 1);
+    uint8 *store = varAddress(*(GState->pc++), 1, 0);
     const uint16 objid = remap_objectid(GState->operands[0]);
     const uint16 propid = GState->operands[1];
     const uint16 external_mem_objects_base = ZORK1_EXTERN_MEM_OBJS_BASE;  // ZORK 1 SPECIFIC MAGIC
