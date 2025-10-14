@@ -160,15 +160,20 @@ static uint8 *varAddress(const uint8 var, const int writing, const int indirect)
 {
     if (var == 0) // top of stack
     {
+        // "6.3.4: In the seven opcodes that take indirect variable references (inc, dec, inc_chk, dec_chk, load, store, pull), an indirect reference to the stack pointer does not push or pull the top item of the stack - it is read or written in place."
         if (indirect)
-            return (uint8 *) (writing ? GState->sp : GState->sp - 1);  // "6.3.4: In the seven opcodes that take indirect variable references (inc, dec, inc_chk, dec_chk, load, store, pull), an indirect reference to the stack pointer does not push or pull the top item of the stack - it is read or written in place."
+        {
+            if (GState->sp == GState->stack)
+                GState->die("Stack underflow");
+            return (uint8 *) (GState->sp - 1);
+        } // if
         else if (writing)
         {
             if ((GState->sp-GState->stack) >= (sizeof (GState->stack) / sizeof (GState->stack[0])))
                 GState->die("Stack overflow");
             dbg("push stack\n");
             return (uint8 *) GState->sp++;
-        } // if
+        } // else if
         else
         {
             if (GState->sp == GState->stack)
