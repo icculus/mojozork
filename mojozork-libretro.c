@@ -29,8 +29,8 @@
 // Touch input should work on any platform, but on several desktop platforms
 //  this RETRO_DEVICE_POINTER just gives you mouse input atm, so rather
 //  than risk the confusion, we turn off touch support if you aren't on
-//  Android for now.
-#if defined(__ANDROID__)
+//  a mobile platform for now.
+#if defined(__ANDROID__) || defined(__APPLE__)
 #define IGNORE_TOUCH_INPUT 0
 #else
 #define IGNORE_TOUCH_INPUT 1
