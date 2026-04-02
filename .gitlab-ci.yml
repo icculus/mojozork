@@ -47,6 +47,11 @@ include:
   # Nintendo 3DS
   #- project: 'libretro-infrastructure/ci-templates'
   #  file: '/ctr-static-cmake.yml'
+
+  #################################### MISC ##################################
+  # webOS (LGTV)
+  - project: 'libretro-infrastructure/ci-templates'
+    file: '/webos-cmake.yml'
 ﻿
 # Stages for building
 stages:
@@ -138,3 +143,10 @@ libretro-build-tvos-arm64:
   #extends:
     #- .libretro-ctr-static-cmake-retroarch-master
     #- .core-defs
+
+#################################### MISC ####################################
+# webOS
+libretro-build-webos-armv7a:
+  extends:
+    - .libretro-webos-armv7a-cmake
+    - .core-defs
