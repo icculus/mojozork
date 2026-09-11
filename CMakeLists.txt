@@ -61,7 +61,7 @@ if(MOJOZORK_LIBRETRO)
     set_target_properties(mojozork_libretro PROPERTIES PREFIX "")
 
     if(LIBRETRO_SUFFIX)  # some libretro builders set this.
-        set_target_properties(mojozork_libretro PROPERTIES LIBRARY_OUTPUT_NAME "mojozork_libretro${LIBRETRO_SUFFIX}")
+        set_target_properties(mojozork_libretro PROPERTIES LIBRARY_OUTPUT_NAME "libretro${LIBRETRO_SUFFIX}")
     endif()
 endif()
 
