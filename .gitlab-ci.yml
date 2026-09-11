@@ -22,17 +22,18 @@ include:
   - project: 'libretro-infrastructure/ci-templates'
     file: '/windows-cmake-msvc19.yml'
 
-  # Windows msvc10 64-bit
-  - project: 'libretro-infrastructure/ci-templates'
-    file: '/windows-x64-msvc10-msys2.yml'
-
-  # Windows msvc10 32-bit
-  - project: 'libretro-infrastructure/ci-templates'
-    file: '/windows-i686-msvc10-msys2.yml'
-
-  # Windows msvc05 32-bit
-  - project: 'libretro-infrastructure/ci-templates'
-    file: '/windows-i686-msvc05-msys2.yml'
+  # !!! FIXME: these are makefiles, not cmake, so we're skipping them for now.
+  ## Windows msvc10 64-bit
+  #- project: 'libretro-infrastructure/ci-templates'
+  #  file: '/windows-x64-msvc10-msys2.yml'
+  #
+  ## Windows msvc10 32-bit
+  #- project: 'libretro-infrastructure/ci-templates'
+  #  file: '/windows-i686-msvc10-msys2.yml'
+  #
+  ## Windows msvc05 32-bit
+  #- project: 'libretro-infrastructure/ci-templates'
+  #  file: '/windows-i686-msvc05-msys2.yml'
 
   # Linux
   - project: 'libretro-infrastructure/ci-templates'
