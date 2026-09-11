@@ -141,23 +141,24 @@ libretro-build-windows-msvc19-i686:
     - .libretro-windows-msvc19-cmake-x86
     - .core-defs
 
-# Windows msvc10 64-bit
-libretro-build-windows-msvc10-x64:
-  extends:
-    - .libretro-windows-x64-msvc10-msys2-make-default
-    - .core-defs
-
-# Windows msvc10 32-bit
-libretro-build-windows-msvc10-i686:
-  extends:
-    - .libretro-windows-i686-msvc10-msys2-make-default
-    - .core-defs
-
-# Windows msvc05 32-bit
-libretro-build-windows-msvc05-i686:
-  extends:
-    - .libretro-windows-i686-msvc05-msys2-make-default
-    - .core-defs
+# !!! FIXME: these are makefiles, not cmake, so we're skipping them for now.
+## Windows msvc10 64-bit
+#libretro-build-windows-msvc10-x64:
+#  extends:
+#    - .libretro-windows-x64-msvc10-msys2-make-default
+#    - .core-defs
+#
+## Windows msvc10 32-bit
+#libretro-build-windows-msvc10-i686:
+#  extends:
+#    - .libretro-windows-i686-msvc10-msys2-make-default
+#    - .core-defs
+#
+## Windows msvc05 32-bit
+#libretro-build-windows-msvc05-i686:
+#  extends:
+#    - .libretro-windows-i686-msvc05-msys2-make-default
+#    - .core-defs
 
 # Linux 64-bit
 libretro-build-linux-x64:
