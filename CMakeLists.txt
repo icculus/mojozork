@@ -52,11 +52,17 @@ if(MOJOZORK_MULTIZORK)
 endif()
 
 if(MOJOZORK_LIBRETRO)
-    add_library(mojozork_libretro SHARED mojozork-libretro.c)
-    if(ANDROID)  # Android builds of libretro cores need specific names.
-        set_target_properties(mojozork_libretro PROPERTIES LIBRARY_OUTPUT_NAME mojozork_libretro_android)
+    if(LIBRETRO_STATIC)   # some libretro builders set this.
+        add_library(mojozork_libretro STATIC mojozork-libretro.c)
+    else()
+        add_library(mojozork_libretro SHARED mojozork-libretro.c)
     endif()
+
     set_target_properties(mojozork_libretro PROPERTIES PREFIX "")
+
+    if(LIBRETRO_SUFFIX)  # some libretro builders set this.
+        set_target_properties(mojozork_libretro PROPERTIES LIBRARY_OUTPUT_NAME "mojozork_libretro${LIBRETRO_SUFFIX}")
+    endif()
 endif()
 
 if(MOJOZORK_SDL3)
