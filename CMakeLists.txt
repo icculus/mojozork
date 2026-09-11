@@ -1,4 +1,5 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.7...3.16) # !!! FIXME: some of libretro's buildbots are still on 3.7.2, remove this when they upgrade.
+
 project(mojozork)
 
 set(CMAKE_C_STANDARD "99")
