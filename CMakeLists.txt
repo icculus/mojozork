@@ -59,7 +59,21 @@ if(MOJOZORK_LIBRETRO)
     endif()
 
     set_target_properties(mojozork_libretro PROPERTIES PREFIX "")
-    set_target_properties(mojozork_libretro PROPERTIES LIBRARY_OUTPUT_NAME "mojozork_libretro${LIBRETRO_SUFFIX}")
+
+    # OUTPUT_NAME rather than LIBRARY_OUTPUT_NAME, because the latter names the
+    # LIBRARY artifact only - a shared object. Every builder that sets
+    # LIBRETRO_SUFFIX also sets LIBRETRO_STATIC, so the thing being produced is
+    # an ARCHIVE, the property did not apply to it, and the archive kept its
+    # default name. That is why the console builders all failed at the copy
+    # step looking for mojozork_libretro_ctr.a and so on, while the build
+    # itself had succeeded. OUTPUT_NAME covers both kinds.
+    set_target_properties(mojozork_libretro PROPERTIES OUTPUT_NAME "mojozork_libretro${LIBRETRO_SUFFIX}")
+
+    if(EMSCRIPTEN)
+        # The libretro emscripten builder wants LLVM bitcode under a .bc name;
+        # emcc's static archives are .a by default.
+        set_target_properties(mojozork_libretro PROPERTIES SUFFIX ".bc")
+    endif()
 endif()
 
 if(MOJOZORK_SDL3)
