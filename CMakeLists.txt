@@ -59,7 +59,7 @@ if(MOJOZORK_LIBRETRO)
     endif()
 
     set_target_properties(mojozork_libretro PROPERTIES PREFIX "")
-    set_target_properties(mojozork_libretro PROPERTIES LIBRARY_OUTPUT_NAME "mojozork_libretro${LIBRETRO_SUFFIX}")
+    set_target_properties(mojozork_libretro PROPERTIES OUTPUT_NAME "mojozork_libretro${LIBRETRO_SUFFIX}")
 endif()
 
 if(MOJOZORK_SDL3)
