@@ -60,6 +60,9 @@ if(MOJOZORK_LIBRETRO)
 
     set_target_properties(mojozork_libretro PROPERTIES PREFIX "")
     set_target_properties(mojozork_libretro PROPERTIES OUTPUT_NAME "mojozork_libretro${LIBRETRO_SUFFIX}")
+    if(EMSCRIPTEN)  # Apparently the libretro builders want extra magic for Emscripten builds.
+        set_target_properties(mojozork_libretro PROPERTIES SUFFIX ".bc")
+    endif()
 endif()
 
 if(MOJOZORK_SDL3)
