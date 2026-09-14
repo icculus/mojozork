@@ -61,9 +61,9 @@ include:
     file: '/ios-cmake.yml'
 
   ################################## CONSOLES ################################
-  # PlayStation3
-  - project: 'libretro-infrastructure/ci-templates'
-    file: '/psl1ght-static.yml'
+  ## PlayStation3
+  #- project: 'libretro-infrastructure/ci-templates'
+  #  file: '/psl1ght-static.yml'
     
   # PlayStation Vita
   - project: 'libretro-infrastructure/ci-templates'
@@ -240,11 +240,11 @@ libretro-build-ios9:
     - .core-defs
 
 ################################### CONSOLES #################################
-# PlayStation3
-libretro-build-psl1ght:
-  extends:
-    - .libretro-psl1ght-static-retroarch-master
-    - .core-defs
+## PlayStation3
+#libretro-build-psl1ght:
+#  extends:
+#    - .libretro-psl1ght-static-retroarch-master
+#    - .core-defs
 
 # PlayStation Vita
 libretro-build-vita:
